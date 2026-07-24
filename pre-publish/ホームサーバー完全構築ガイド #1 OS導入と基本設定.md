@@ -1,15 +1,15 @@
 ---
-article_id: '08828ec8b0719d4ae2ae640a6dd4867d'
+article_id: 08828ec8b0719d4ae2ae640a6dd4867d
 title: 'ホームサーバー完全構築ガイド #1 OS導入と基本設定'
 series: ホームサーバー完全構築ガイド
-emoji: 🌃
+emoji: "\U0001F303"
 type: tech
 tags:
   - Linux
   - Ubuntu
   - Server
   - homeserver
-local_updated_at: '2024-11-11T18:51:48+09:00'
+local_updated_at: '2026-07-24T11:54:01+08:00'
 ---
 # **はじめに**
 

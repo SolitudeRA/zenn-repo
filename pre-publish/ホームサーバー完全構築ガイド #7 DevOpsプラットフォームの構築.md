@@ -1,8 +1,8 @@
 ---
-article_id: '895c8f601bd9217913d1a253512a97a9'
+article_id: 895c8f601bd9217913d1a253512a97a9
 title: 'ホームサーバー完全構築ガイド #7 DevOpsプラットフォームの構築'
 series: ホームサーバー完全構築ガイド
-emoji: 🌃
+emoji: "\U0001F303"
 type: tech
 tags:
   - devops
@@ -10,6 +10,7 @@ tags:
   - cicd
   - nginx
   - homeserver
+local_updated_at: '2026-07-24T11:54:01+08:00'
 ---
 
 # はじめに

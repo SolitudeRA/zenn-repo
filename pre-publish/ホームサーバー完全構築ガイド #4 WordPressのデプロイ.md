@@ -1,8 +1,8 @@
 ---
-article_id: 'e908faa15ad46dc89cb87bf2d5b5908c'
+article_id: e908faa15ad46dc89cb87bf2d5b5908c
 title: 'ホームサーバー完全構築ガイド #4 WordPressのデプロイ'
 series: ホームサーバー完全構築ガイド
-emoji: 🌃
+emoji: "\U0001F303"
 type: tech
 tags:
   - WordPress
@@ -10,7 +10,7 @@ tags:
   - nginx
   - homeserver
   - self-hosting
-local_updated_at: '2024-11-11T18:53:24+09:00'
+local_updated_at: '2026-07-24T11:54:01+08:00'
 ---
 
 # はじめに
