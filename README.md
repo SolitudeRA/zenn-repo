@@ -134,6 +134,7 @@ parser と series generator は常に `article_id` で binding を引きます�
 
 ```bash
 npm ci
+npm run typecheck
 npm test
 npm run check:articles  # 読み取り専用 dry-run
 npm run build:articles  # 検証後に生成結果を適用
@@ -169,11 +170,15 @@ bootstrap を許可します。
 - **`article-identity.js`**
   manifest、binding、source、target、参照の fail-closed 検証を担当します。
 
+`npm run typecheck` は `tsconfig.json` に従って既存 JavaScript を静的検査します。
+この段階ではファイルを生成せず、公開時の Node.js 実行方法も変更しません。
+
 ### デバッグ
 
 以下のコマンドでローカル環境でスクリプトを実行できます：
 
 ```bash
+npm run typecheck
 npm test
 npm run check:articles
 npm run build:articles

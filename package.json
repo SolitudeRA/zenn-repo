@@ -9,7 +9,8 @@
   "scripts": {
     "build:articles": "node scripts/parse-articles.js",
     "check:articles": "node scripts/parse-articles.js --check",
-    "test": "node --test --experimental-test-isolation=none"
+    "test": "node --test --experimental-test-isolation=none",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -18,5 +19,10 @@
     "fs-extra": "^11.4.0",
     "gray-matter": "^4.0.3",
     "zenn-cli": "0.5.2"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "11.0.4",
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2"
   }
 }
