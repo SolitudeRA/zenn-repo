@@ -4,20 +4,24 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: zenn-publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish_articles:
+  validate_pull_request:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      ARTICLE_MAP_BASE_REF: ${{ github.event.before }}
+      ARTICLE_MAP_BASE_REF: ${{ github.event.pull_request.base.sha }}
 
     steps:
       - uses: actions/checkout@v7
@@ -27,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "24.18.0"
+          node-version-file: ".node-version"
           package-manager-cache: false
 
       - name: Install locked dependencies
@@ -43,12 +47,51 @@ jobs:
         run: npm run build:articles
 
       - name: Validate Zenn article metadata
-        run: npx zenn list:articles
+        run: npx --no-install zenn list:articles
+
+      - name: Reject whitespace errors
+        run: git diff --check
+
+  publish_articles:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      ARTICLE_MAP_BASE_REF: ${{ github.event.before }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ".node-version"
+          package-manager-cache: false
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type-check TypeScript
+        run: npm run typecheck
+
+      - name: Test identity and generation safety
+        run: npm test
+
+      - name: Build ID-bound Zenn articles
+        run: npm run build:articles
+
+      - name: Validate Zenn article metadata
+        run: npx --no-install zenn list:articles
 
       - name: Reject whitespace errors
         run: git diff --check
 
       - name: Commit and push generated outputs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           git config user.name "SolitudeRA"
           git config user.email "solitude@protogalaxy.me"

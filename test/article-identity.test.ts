@@ -289,7 +289,7 @@ function buildFixtureArticles(
     });
 }
 
-test('publish workflow has no commit-message validation bypass', () => {
+test('publish workflow keeps pull requests read-only and publishes main pushes', () => {
     const workflow = fs.readFileSync(
         path.join(
             __dirname,
@@ -301,12 +301,31 @@ test('publish workflow has no commit-message validation bypass', () => {
         'utf8',
     );
 
-    assert.doesNotMatch(workflow, /^ {4}if\s*:/m);
-    assert.match(workflow, /^permissions:\r?\n\s+contents: write$/m);
+    assert.match(workflow, /^  pull_request:\r?\n\s+branches:\r?\n\s+- main$/m);
+    assert.match(workflow, /^permissions:\r?\n\s+contents: read$/m);
+    assert.match(
+        workflow,
+        /^  validate_pull_request:\r?\n\s+if: github\.event_name == 'pull_request'$/m,
+    );
+    assert.match(
+        workflow,
+        /^\s+ARTICLE_MAP_BASE_REF: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/m,
+    );
+    assert.match(
+        workflow,
+        /^  publish_articles:\r?\n\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'[\s\S]*?\n\s+permissions:\r?\n\s+contents: write$/m,
+    );
     assert.match(
         workflow,
         /^\s+ARTICLE_MAP_BASE_REF: \$\{\{ github\.event\.before \}\}$/m,
     );
+    assert.match(
+        workflow,
+        /- name: Commit and push generated outputs\r?\n\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/m,
+    );
+    assert.match(workflow, /node-version-file: "\.node-version"/);
+    assert.doesNotMatch(workflow, /^\s+node-version:/m);
+    assert.match(workflow, /npx --no-install zenn list:articles/);
 });
 
 test('CRLF article-map does not create line-ending churn', (t) => {
