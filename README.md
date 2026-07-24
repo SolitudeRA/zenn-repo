@@ -49,7 +49,7 @@ npm install
 │   ├── .keep        # 空のディレクトリを保持するためのファイル
 ├── pre-publish/     # 公開準備中の記事が格納されるディレクトリ
 ├── scripts/         # 自動化スクリプト
-│   ├── parse-articles.js         # 記事を解析し、公開準備を行うスクリプト
+│   ├── parse-articles.ts         # 記事を解析し、公開準備を行うスクリプト
 │   ├── generate-series-links.ts  # シリーズリンクを生成するスクリプト
 ├── .github/         # GitHub Actionsの設定
 │   └── workflows/
@@ -66,7 +66,7 @@ npm install
 
 1. 自動的にメインリポジトリ`blog-project`のコミットから`pre-publish` に記事を追加または更新します。
 2. GitHub Actions が自動的に以下の処理を実行します：
-   - 記事の解析（`parse-articles.js`）。
+   - 記事の解析（`parse-articles.ts`）。
    - シリーズリンクの生成（`generate-series-links.ts`）。
    - 記事の変更内容をリポジトリにコミット＆プッシュ。
 
@@ -160,7 +160,7 @@ bootstrap を許可します。
 
 ### スクリプト一覧
 
-- **`parse-articles.js`**  
+- **`parse-articles.ts`**
   manifest と map を検証し、ID binding を維持したまま最終記事を生成します。
 
 - **`generate-series-links.ts`**

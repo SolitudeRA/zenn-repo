@@ -1,25 +1,158 @@
 'use strict';
 
-const fs = require('fs-extra');
-const matter = require('gray-matter');
-const path = require('node:path');
+type ArticleId = string;
+
+interface GitResult {
+    status: number;
+    stdout: string;
+    stderr: string;
+}
+
+type GitRunner = (
+    repoRoot: string,
+    args: readonly string[],
+) => GitResult;
+
+interface IdentityOptions {
+    repoRoot?: string;
+    sourceDir?: string;
+    targetDir?: string;
+    manifestPath?: string;
+    mapPath?: string;
+    baseRef?: string;
+    gitRunner?: GitRunner;
+    previousMapData?: unknown;
+    skipHistory?: boolean;
+}
+
+interface BuildArticleOptions extends IdentityOptions {
+    write?: boolean;
+}
+
+interface SourceFrontMatter {
+    title: string;
+    emoji?: unknown;
+    type?: unknown;
+    tags?: unknown;
+    published?: unknown;
+    [key: string]: unknown;
+}
+
+interface TargetFrontMatter {
+    emoji?: unknown;
+    type?: unknown;
+    topics?: unknown;
+    published?: unknown;
+    published_at?: unknown;
+    [key: string]: unknown;
+}
+
+interface SourceArticle {
+    articleId: ArticleId;
+    file: string;
+    filePath: string;
+    data: SourceFrontMatter;
+    content: string;
+    references: readonly unknown[];
+}
+
+interface TargetArticle {
+    articleId: ArticleId;
+    slug: string;
+    file: string;
+    filePath: string;
+    data: TargetFrontMatter;
+    content: string;
+    raw: string;
+}
+
+interface ArticleMapEntry {
+    articleId: ArticleId;
+    slug: string;
+    lifecycle: string;
+}
+
+interface IdentityContext {
+    repoRoot: string;
+    targetDir: string;
+    mapPath: string;
+    mapEntries: Map<ArticleId, ArticleMapEntry>;
+    sourceArticles: Map<ArticleId, SourceArticle>;
+    targetArticles: Map<ArticleId, TargetArticle>;
+}
+
+interface IdentityModule {
+    formatIdentityError(error: unknown): string;
+    loadIdentityContext(options: IdentityOptions): IdentityContext;
+    serializeArticleMap(
+        entries: ReadonlyMap<ArticleId, ArticleMapEntry>,
+    ): string;
+}
+
+interface ArticleMetadata {
+    title: unknown;
+    emoji: unknown;
+    type: unknown;
+    topics: unknown[];
+    published: unknown;
+    published_at?: unknown;
+}
+
+interface ArticleDocument {
+    articleId: ArticleId;
+    slug: string;
+    file: string;
+    filePath: string;
+    data: Record<string, unknown>;
+    content: string;
+    raw: string;
+    lineEndingSource: string;
+}
+
+interface GenerateArticleOptions {
+    documents: ReadonlyMap<ArticleId, ArticleDocument>;
+    sourceArticles: ReadonlyMap<ArticleId, SourceArticle>;
+    mapEntries: ReadonlyMap<ArticleId, ArticleMapEntry>;
+}
+
+interface SeriesLinkModule {
+    generateArticleOutputs(
+        options: GenerateArticleOptions,
+    ): Map<ArticleId, string>;
+    matchDocumentLineEndings(
+        content: string,
+        referenceContent: string,
+    ): string;
+}
+
+interface BuildArticlesResult {
+    changes: string[];
+    outputs: Map<ArticleId, string>;
+    mapOutput: string;
+    context: IdentityContext;
+}
+
+const fs: typeof import('fs-extra') = require('fs-extra');
+const matter: typeof import('gray-matter') = require('gray-matter');
+const path: typeof import('node:path') = require('node:path');
 const {
     formatIdentityError,
     loadIdentityContext,
     serializeArticleMap,
-} = require('./article-identity');
-/** @type {any} Native CommonJS boundary until this caller is migrated. */
-const seriesLinkModule = require('./generate-series-links.ts');
+}: IdentityModule = require('./article-identity');
 const {
     generateArticleOutputs,
     matchDocumentLineEndings,
-} = seriesLinkModule;
+}: SeriesLinkModule = require('./generate-series-links.ts');
 
-function quoted(value) {
+function quoted(value: unknown): string {
     return JSON.stringify(String(value));
 }
 
-function buildMetadata(source, target) {
+function buildMetadata(
+    source: SourceArticle,
+    target: TargetArticle | null,
+): ArticleMetadata {
     const sourceData = source.data;
     if (!target) {
         return {
@@ -38,7 +171,7 @@ function buildMetadata(source, target) {
         };
     }
 
-    const metadata = {
+    const metadata: ArticleMetadata = {
         // Identity comes from the manifest/map, so a title rename updates the
         // same slug instead of creating another Zenn article.
         title: sourceData.title,
@@ -61,7 +194,10 @@ function buildMetadata(source, target) {
     return metadata;
 }
 
-function serializeIntermediateArticle(metadata, sourceBody) {
+function serializeIntermediateArticle(
+    metadata: ArticleMetadata,
+    sourceBody: string,
+): string {
     const frontMatter =
         '---\n' +
         `title: ${quoted(metadata.title)}\n` +
@@ -79,11 +215,15 @@ function serializeIntermediateArticle(metadata, sourceBody) {
     return `${frontMatter}\n\n${sourceBody}`;
 }
 
-function buildArticles(options = {}) {
+function buildArticles(
+    options: BuildArticleOptions = {},
+): BuildArticlesResult {
     const write = options.write !== false;
     const context = loadIdentityContext(options);
-    const nextMapEntries = new Map(context.mapEntries);
-    const documents = new Map();
+    const nextMapEntries = new Map<ArticleId, ArticleMapEntry>(
+        context.mapEntries,
+    );
+    const documents = new Map<ArticleId, ArticleDocument>();
 
     for (const [articleId, source] of context.sourceArticles) {
         let binding = nextMapEntries.get(articleId);
@@ -105,7 +245,10 @@ function buildArticles(options = {}) {
             articleId,
             slug: binding.slug,
             file: `${binding.slug}.md`,
-            filePath: path.join(context.targetDir, `${binding.slug}.md`),
+            filePath: path.join(
+                context.targetDir,
+                `${binding.slug}.md`,
+            ),
             data: parsed.data,
             content: parsed.content,
             raw,
@@ -119,17 +262,19 @@ function buildArticles(options = {}) {
         mapEntries: nextMapEntries,
     });
     const canonicalMapOutput = serializeArticleMap(nextMapEntries);
-    const changes = [];
+    const changes: string[] = [];
 
     for (const [articleId, output] of outputs) {
-        const document = documents.get(articleId);
+        const document = documents.get(articleId)!;
         const oldOutput = context.targetArticles.get(articleId)?.raw;
         if (output !== oldOutput) {
-            changes.push(path.relative(context.repoRoot, document.filePath));
+            changes.push(
+                path.relative(context.repoRoot, document.filePath),
+            );
         }
     }
 
-    let oldMapOutput = null;
+    let oldMapOutput: string | null = null;
     try {
         oldMapOutput = fs.readFileSync(context.mapPath, 'utf8');
     } catch {
@@ -151,8 +296,9 @@ function buildArticles(options = {}) {
     // before this point. No validation path below performs a partial write.
     if (write) {
         for (const [articleId, output] of outputs) {
-            const document = documents.get(articleId);
-            const oldOutput = context.targetArticles.get(articleId)?.raw;
+            const document = documents.get(articleId)!;
+            const oldOutput =
+                context.targetArticles.get(articleId)?.raw;
             if (output !== oldOutput) {
                 fs.writeFileSync(document.filePath, output, 'utf8');
             }
@@ -170,17 +316,22 @@ function buildArticles(options = {}) {
     };
 }
 
-function runCli(argv = process.argv.slice(2)) {
+function runCli(
+    argv: readonly string[] = process.argv.slice(2),
+): BuildArticlesResult {
     const checkOnly = argv.includes('--check');
     const baseRefArguments = argv.filter((argument) =>
         argument.startsWith('--base-ref='),
     );
     const unknown = argv.filter(
         (argument) =>
-            argument !== '--check' && !argument.startsWith('--base-ref='),
+            argument !== '--check' &&
+            !argument.startsWith('--base-ref='),
     );
     if (unknown.length > 0) {
-        throw new TypeError(`Unknown argument(s): ${unknown.join(', ')}`);
+        throw new TypeError(
+            `Unknown argument(s): ${unknown.join(', ')}`,
+        );
     }
     if (baseRefArguments.length > 1) {
         throw new TypeError('--base-ref may be specified only once.');

@@ -13,7 +13,9 @@ const {
     IdentityValidationError,
     compareBindingHistory,
 } = require('../scripts/article-identity');
-const { buildArticles } = require('../scripts/parse-articles');
+/** @type {any} Native CommonJS boundary until this test is migrated. */
+const parserModule = require('../scripts/parse-articles.ts');
+const { buildArticles } = parserModule;
 
 const ID_A = '08828ec8b0719d4ae2ae640a6dd4867d';
 const ID_B = '339243802597e8c42bcddfb10b5e94e3';
