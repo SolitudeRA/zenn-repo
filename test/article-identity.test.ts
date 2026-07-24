@@ -1,22 +1,113 @@
 'use strict';
 
-const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
-const matter = require('gray-matter');
+interface Diagnostic {
+    code: string;
+    file: string;
+    message: string;
+}
 
-/** @type {any} Native CommonJS boundary until this test is migrated. */
-const identityModule = require('../scripts/article-identity.ts');
+interface IdentityValidationErrorLike extends Error {
+    diagnostics: Diagnostic[];
+}
+
+interface IdentityValidationErrorConstructor {
+    new (diagnostics: Diagnostic[]): IdentityValidationErrorLike;
+}
+
+interface IdentityModule {
+    IdentityValidationError: IdentityValidationErrorConstructor;
+    compareBindingHistory(
+        previousData: unknown,
+        currentData: unknown,
+        mapPath: string,
+        diagnostics: Diagnostic[],
+    ): void;
+}
+
+interface GitResult {
+    status: number;
+    stdout: string;
+    stderr: string;
+}
+
+type GitRunner = (
+    repoRoot: string,
+    args: readonly string[],
+) => GitResult;
+
+interface BuildArticlesOptions {
+    repoRoot: string;
+    write?: boolean;
+    baseRef?: string;
+    previousMapData?: unknown;
+    skipHistory?: boolean;
+    gitRunner?: GitRunner;
+}
+
+interface BuildArticlesResult {
+    changes: string[];
+}
+
+interface ParserModule {
+    buildArticles(options: BuildArticlesOptions): BuildArticlesResult;
+}
+
+interface ArticleBinding {
+    slug: string;
+    lifecycle: string;
+}
+
+interface ZennManifestTarget {
+    desired: string;
+}
+
+interface ManifestEntry {
+    article_id: string;
+    source: string;
+    article_state: string;
+    targets: {
+        qiita: { desired: string };
+        zenn: ZennManifestTarget;
+    };
+}
+
+interface FixtureOptions {
+    bindings?: Record<string, ArticleBinding>;
+    manifestArticles?: ManifestEntry[];
+    sources?: Record<string, string>;
+    targets?: Record<string, string>;
+}
+
+interface Fixture {
+    repoRoot: string;
+    sourceDir: string;
+    targetDir: string;
+}
+
+interface ArticleMapData {
+    schema_version: number;
+    platform: string;
+    bindings: Record<string, ArticleBinding>;
+}
+
+const assert: typeof import('node:assert/strict') =
+    require('node:assert/strict');
+const crypto: typeof import('node:crypto') = require('node:crypto');
+const { execFileSync }: typeof import('node:child_process') =
+    require('node:child_process');
+const fs: typeof import('node:fs') = require('node:fs');
+const os: typeof import('node:os') = require('node:os');
+const path: typeof import('node:path') = require('node:path');
+const test: typeof import('node:test') = require('node:test');
+const matter: typeof import('gray-matter') = require('gray-matter');
+
+const identityModule: IdentityModule =
+    require('../scripts/article-identity.ts');
 const {
     IdentityValidationError,
     compareBindingHistory,
 } = identityModule;
-/** @type {any} Native CommonJS boundary until this test is migrated. */
-const parserModule = require('../scripts/parse-articles.ts');
+const parserModule: ParserModule = require('../scripts/parse-articles.ts');
 const { buildArticles } = parserModule;
 
 const ID_A = '08828ec8b0719d4ae2ae640a6dd4867d';
@@ -25,11 +116,11 @@ const ID_NEW = '018f0f9567d37b908b255f9f9e913901';
 const HYPHENATED_UUID = '018f0f95-67d3-7b90-8b25-5f9f9e913901';
 
 function sourceMarkdown(
-    title,
+    title: string,
     body = '本文\n',
-    extra = {},
+    extra: Record<string, unknown> = {},
     articleId = ID_A,
-) {
+): string {
     return matter.stringify(body, {
         article_id: articleId,
         title,
@@ -40,7 +131,7 @@ function sourceMarkdown(
     });
 }
 
-function targetMarkdown(title, body = '本文\n') {
+function targetMarkdown(title: string, body = '本文\n'): string {
     return matter.stringify(body, {
         title,
         emoji: '🌃',
@@ -51,10 +142,10 @@ function targetMarkdown(title, body = '本文\n') {
 }
 
 function zennManifestEntry(
-    articleId,
-    file,
-    overrides = {},
-) {
+    articleId: string,
+    file: string,
+    overrides: Partial<ManifestEntry> = {},
+): ManifestEntry {
     return {
         article_id: articleId,
         source: `articles/share/${file}`,
@@ -67,7 +158,10 @@ function zennManifestEntry(
     };
 }
 
-function createFixture(t, options = {}) {
+function createFixture(
+    t: import('node:test').TestContext,
+    options: FixtureOptions = {},
+): Fixture {
     const repoRoot = fs.mkdtempSync(
         path.join(os.tmpdir(), 'zenn-identity-test-'),
     );
@@ -138,7 +232,9 @@ function createFixture(t, options = {}) {
     return { repoRoot, sourceDir, targetDir };
 }
 
-function captureIdentityError(callback) {
+function captureIdentityError(
+    callback: () => unknown,
+): IdentityValidationErrorLike {
     try {
         callback();
     } catch (error) {
@@ -148,25 +244,27 @@ function captureIdentityError(callback) {
     assert.fail('Expected IdentityValidationError');
 }
 
-function diagnosticCodes(error) {
+function diagnosticCodes(
+    error: IdentityValidationErrorLike,
+): Set<string> {
     return new Set(error.diagnostics.map((item) => item.code));
 }
 
-function sha256(filePath) {
+function sha256(filePath: string): string {
     return crypto
         .createHash('sha256')
         .update(fs.readFileSync(filePath))
         .digest('hex');
 }
 
-function runGitQuiet(repoRoot, args) {
+function runGitQuiet(repoRoot: string, args: readonly string[]): void {
     execFileSync('git', args, {
         cwd: repoRoot,
         stdio: 'ignore',
     });
 }
 
-function initializeGitRepo(repoRoot) {
+function initializeGitRepo(repoRoot: string): void {
     runGitQuiet(repoRoot, ['init']);
     runGitQuiet(repoRoot, [
         'config',
@@ -180,7 +278,10 @@ function initializeGitRepo(repoRoot) {
     ]);
 }
 
-function buildFixtureArticles(fixture, options = {}) {
+function buildFixtureArticles(
+    fixture: Fixture,
+    options: Omit<BuildArticlesOptions, 'repoRoot'> = {},
+): BuildArticlesResult {
     return buildArticles({
         repoRoot: fixture.repoRoot,
         skipHistory: true,
@@ -508,7 +609,7 @@ test('new article creates an append-only binding and identity slug', (t) => {
             path.join(fixture.repoRoot, 'article-map.json'),
             'utf8',
         ),
-    );
+    ) as ArticleMapData;
     assert.deepEqual(map.bindings[ID_NEW], {
         slug: ID_NEW,
         lifecycle: 'active',
@@ -573,7 +674,7 @@ test('historical binding slug, lifecycle and removal are immutable', () => {
             bindings: {},
         },
     ]) {
-        const diagnostics = [];
+        const diagnostics: Diagnostic[] = [];
         compareBindingHistory(
             previous,
             current,
@@ -603,7 +704,7 @@ test('historical binding comparison permits append-only additions', () => {
             [ID_B]: { slug: ID_B, lifecycle: 'active' },
         },
     };
-    const diagnostics = [];
+    const diagnostics: Diagnostic[] = [];
 
     compareBindingHistory(
         previous,
@@ -618,7 +719,9 @@ test('historical binding comparison permits append-only additions', () => {
 test('explicit base map rejects an otherwise self-consistent binding rewrite', (t) => {
     const fixture = createFixture(t);
     const mapPath = path.join(fixture.repoRoot, 'article-map.json');
-    const previousMapData = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+    const previousMapData = JSON.parse(
+        fs.readFileSync(mapPath, 'utf8'),
+    ) as ArticleMapData;
     const map = structuredClone(previousMapData);
     map.bindings[ID_A].slug = ID_B;
     fs.writeFileSync(mapPath, `${JSON.stringify(map, null, 2)}\n`);
@@ -648,7 +751,9 @@ test('default Git reader compares the committed base map', (t) => {
     ]);
 
     const mapPath = path.join(fixture.repoRoot, 'article-map.json');
-    const map = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+    const map = JSON.parse(
+        fs.readFileSync(mapPath, 'utf8'),
+    ) as ArticleMapData;
     map.bindings[ID_A].slug = ID_B;
     fs.writeFileSync(mapPath, `${JSON.stringify(map, null, 2)}\n`);
     fs.renameSync(
@@ -763,8 +868,8 @@ test('unreadable explicit base revision fails closed', (t) => {
 
 test('verified reachable history without article-map allows bootstrap', (t) => {
     const fixture = createFixture(t);
-    const calls = [];
-    const gitRunner = (_repoRoot, args) => {
+    const calls: Array<readonly string[]> = [];
+    const gitRunner: GitRunner = (_repoRoot, args) => {
         calls.push(args);
         if (args[0] === 'rev-parse') {
             return { status: 0, stdout: 'base-commit\n', stderr: '' };
@@ -793,7 +898,7 @@ test('verified reachable history without article-map allows bootstrap', (t) => {
 
 test('map history read failure is not treated as bootstrap', (t) => {
     const fixture = createFixture(t);
-    const gitRunner = (_repoRoot, args) => {
+    const gitRunner: GitRunner = (_repoRoot, args) => {
         if (args[0] === 'rev-parse') {
             return { status: 0, stdout: 'base-commit\n', stderr: '' };
         }
@@ -827,7 +932,7 @@ test('map history read failure is not treated as bootstrap', (t) => {
 
 test('base tree read failure is not treated as bootstrap', (t) => {
     const fixture = createFixture(t);
-    const gitRunner = (_repoRoot, args) => {
+    const gitRunner: GitRunner = (_repoRoot, args) => {
         if (args[0] === 'rev-parse') {
             return { status: 0, stdout: 'base-commit\n', stderr: '' };
         }

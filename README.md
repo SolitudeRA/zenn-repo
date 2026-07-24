@@ -170,9 +170,9 @@ bootstrap を許可します。
 - **`article-identity.ts`**
   manifest、binding、source、target、参照の fail-closed 検証を担当します。
 
-`npm run typecheck` は既存 JavaScript の `checkJs` と、移行済み TypeScript の
-strict 検査を実行します。ファイルは生成しません。`generate-series-links.ts` は
-Node.js 24 のネイティブ型除去を使い、CommonJS のまま実行されます。
+`npm run typecheck` はすべての TypeScript を strict モードで検査します。
+ファイルは生成しません。スクリプトとテストは Node.js 24 のネイティブ型除去を
+使い、CommonJS のまま実行されます。
 
 ### デバッグ
 
