@@ -1,164 +1,229 @@
-const fs = require('fs-extra');
-const path = require('path');
-const matter = require('gray-matter');
+'use strict';
 
-/**
- * <<<タイトル>>> 記法を文中から検出し、対応するZenn記事へのリンク形式に変換する関数。
- * 
- * 例: <<<タイトル>>> -> [タイトル](https://zenn.dev/solitudera/articles/...)
- * 
- * @param {string} content 対象記事のテキストコンテンツ
- * @param {Array} articles 記事メタ情報（title, slugなど）を持つオブジェクトの配列
- * @returns {string} 変換後のテキストコンテンツ
- */
-function replaceInlineSeriesLinks(content, articles) {
-    const regex = /<<<([^>]+)>>>/g;
-    return content.replace(regex, (match, p1) => {
-        const title = p1.trim();
-        const foundArticle = articles.find(a => a.title === title);
-        if (foundArticle) {
-            const zennLink = `https://zenn.dev/solitudera/articles/${foundArticle.slug}`;
-            return `[${title}](${zennLink})`;
+const fs = require('fs-extra');
+const matter = require('gray-matter');
+const path = require('node:path');
+const {
+    formatIdentityError,
+    loadIdentityContext,
+} = require('./article-identity');
+
+const SERIES_START = '<!-- START_SERIES -->';
+const SERIES_END = '<!-- END_SERIES -->';
+const ZENN_ARTICLE_BASE = 'https://zenn.dev/solitudera/articles';
+
+function matchDocumentLineEndings(content, referenceContent) {
+    const normalized = content.replace(/\r\n/g, '\n');
+    return referenceContent.includes('\r\n')
+        ? normalized.replace(/\n/g, '\r\n')
+        : normalized;
+}
+
+function replaceInlineArticleLinks(content, sourceArticles, mapEntries) {
+    return content.replace(
+        /<<<article:([a-z0-9_-]+)>>>/g,
+        (match, articleId) => {
+            const source = sourceArticles.get(articleId);
+            const binding = mapEntries.get(articleId);
+            if (!source || !binding) {
+                // The shared identity validator rejects this before rendering.
+                // Keeping the token here avoids a misleading partial link if
+                // this pure function is called incorrectly.
+                return match;
+            }
+            return `[${source.data.title}](${ZENN_ARTICLE_BASE}/${binding.slug})`;
+        },
+    );
+}
+
+function buildSeriesGroups(sourceArticles) {
+    const groups = new Map();
+    const sortedSources = [...sourceArticles.values()].sort((left, right) =>
+        left.file.localeCompare(right.file),
+    );
+
+    for (const source of sortedSources) {
+        if (
+            typeof source.data.series !== 'string' ||
+            source.data.series.trim().length === 0
+        ) {
+            continue;
         }
-        // 対応する記事が見つからない場合はそのまま返す
-        return match;
-    });
+        const series = source.data.series;
+        const members = groups.get(series) || [];
+        members.push(source);
+        groups.set(series, members);
+    }
+
+    return groups;
+}
+
+function insertOrReplaceSeriesBlock(
+    content,
+    source,
+    seriesMembers,
+    mapEntries,
+) {
+    const links = seriesMembers
+        .filter((member) => member.articleId !== source.articleId)
+        .map((member) => {
+            const binding = mapEntries.get(member.articleId);
+            return `[${member.data.title}](${ZENN_ARTICLE_BASE}/${binding.slug})`;
+        });
+
+    const seriesLinks =
+        `${SERIES_START}\n\n` +
+        `${source.data.series} シリーズ記事：\n\n` +
+        `${links.join('\n')}\n\n` +
+        SERIES_END;
+
+    const lines = content.split('\n');
+    const startIndex = lines.indexOf(SERIES_START);
+    const endIndex = lines.indexOf(SERIES_END);
+
+    if (startIndex !== -1 && endIndex !== -1) {
+        lines.splice(
+            startIndex,
+            endIndex - startIndex + 1,
+            ...seriesLinks.split('\n'),
+        );
+    } else {
+        lines.unshift(seriesLinks);
+    }
+
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 /**
- * pre-publish ディレクトリと articles ディレクトリに基づいてシリーズ記事リンクを生成し、
- * Zenn記事のMarkdownファイルを更新する関数。
- * 
- * シリーズ情報をもとに、該当するZenn記事内に
- * <!-- START_SERIES --> ... <!-- END_SERIES --> のブロックを挿入または更新し、
- * さらに <<<タイトル>>> 記法を対応するZennリンクへと変換する。
- * 
- * @param {string} prePublishDir シリーズ記事が格納されているディレクトリパス
- * @param {string} articlesDir Zenn用記事が格納されているディレクトリパス
+ * Render final Zenn article bytes from ID-bound source and target documents.
+ *
+ * `documents` is a Map keyed by article_id. Each value contains the raw
+ * parser output plus parsed `data` and `content`. No title lookup is used.
  */
-const generateSeriesLinksForZenn = (prePublishDir, articlesDir) => {
-    const SERIES_START = '<!-- START_SERIES -->';
-    const SERIES_END = '<!-- END_SERIES -->';
+function generateArticleOutputs({
+    documents,
+    sourceArticles,
+    mapEntries,
+}) {
+    const outputs = new Map();
+    const seriesGroups = buildSeriesGroups(sourceArticles);
 
-    // ディレクトリ存在確認
-    if (!fs.existsSync(prePublishDir) || !fs.existsSync(articlesDir)) {
-        console.error(`エラー: 指定されたディレクトリが見つかりません: ${prePublishDir}, ${articlesDir}`);
-        process.exit(1);
-    }
-
-    // pre-publish ディレクトリ内の記事を読み込み、タイトルとシリーズ情報を取得
-    const prePublishArticles = fs.readdirSync(prePublishDir)
-        .filter((file) => file.endsWith('.md'))
-        .map((file) => {
-            const filePath = path.join(prePublishDir, file);
-            const content = fs.readFileSync(filePath, 'utf8');
-            const parsed = matter(content);
-            return {
-                file,
-                title: parsed.data.title,
-                series: parsed.data.series || null, // series プロパティがない場合は null
-            };
-        })
-        .filter((article) => article.series); // series が設定されていない記事は除外
-
-    if (prePublishArticles.length === 0) {
-        console.log("シリーズが定義されている記事が見つからないため、処理を終了します。");
-        return;
-    }
-
-    // articles ディレクトリ内のZenn記事を読み込み、タイトルとslug、メタ情報を取得
-    const articles = fs.readdirSync(articlesDir)
-        .filter((file) => file.endsWith('.md'))
-        .map((file) => {
-            const filePath = path.join(articlesDir, file);
-            const content = fs.readFileSync(filePath, 'utf8');
-            const parsed = matter(content);
-            return {
-                file,
-                title: parsed.data.title,
-                slug: file.replace('.md', ''), // ファイル名から拡張子を除去し、slugとして使用
-                filePath,
-                metadata: parsed.data,
-                content: parsed.content,
-            };
-        });
-
-    // pre-publish記事を series ごとにグループ化
-    const seriesMap = {};
-    prePublishArticles.forEach((article) => {
-        if (!seriesMap[article.series]) {
-            seriesMap[article.series] = [];
+    for (const [articleId, document] of documents) {
+        const source = sourceArticles.get(articleId);
+        if (!source) {
+            throw new Error(`Missing source article for ${articleId}`);
         }
-        seriesMap[article.series].push(article);
+
+        // Generation is platform-independent. Normalize checkout line endings
+        // before marker matching/blank-line compaction, then restore the
+        // existing target's convention at the output boundary.
+        let content = document.content.replace(/\r\n/g, '\n');
+        let needsMatterSerialization = source.references.length > 0;
+        const series =
+            typeof source.data.series === 'string'
+                ? source.data.series
+                : null;
+
+        if (series && seriesGroups.has(series)) {
+            content = insertOrReplaceSeriesBlock(
+                content,
+                source,
+                seriesGroups.get(series),
+                mapEntries,
+            );
+            needsMatterSerialization = true;
+        }
+
+        content = replaceInlineArticleLinks(
+            content,
+            sourceArticles,
+            mapEntries,
+        );
+
+        const output = needsMatterSerialization
+                ? matter.stringify(content, document.data)
+                : document.raw;
+        outputs.set(
+            articleId,
+            matchDocumentLineEndings(
+                output,
+                document.lineEndingSource || document.raw,
+            ),
+        );
+    }
+
+    return outputs;
+}
+
+function runStandalone(argv = process.argv.slice(2)) {
+    const positional = argv.filter((argument) => argument !== '--check');
+    const checkOnly = argv.includes('--check');
+    if (positional.length !== 2) {
+        throw new TypeError(
+            '使用方法: node scripts/generate-series-links.js <pre-publish-dir> <articles-dir> [--check]',
+        );
+    }
+
+    const sourceDir = path.resolve(positional[0]);
+    const targetDir = path.resolve(positional[1]);
+    const repoRoot = path.dirname(sourceDir);
+    const context = loadIdentityContext({
+        repoRoot,
+        sourceDir,
+        targetDir,
     });
+    const documents = new Map();
 
-    // 各シリーズについてリンク生成と記事更新を実行
-    Object.keys(seriesMap).forEach((series) => {
-        const articlesInSeries = seriesMap[series];
-
-        // pre-publish ディレクトリ内の記事をファイル名順でソート
-        articlesInSeries.sort((a, b) => a.file.localeCompare(b.file));
-
-        articlesInSeries.forEach((article) => {
-            const targetArticle = articles.find((a) => a.title === article.title);
-            if (!targetArticle) {
-                console.error(`エラー: 対応する記事が見つかりません: ${article.title}`);
-                return;
-            }
-
-            // シリーズ内の他の記事へのリンクを生成（対象記事自身は除外）
-            const filteredArticles = articlesInSeries.filter((a) => a.title !== article.title);
-
-            const seriesLinks = `${SERIES_START}\n\n` +
-                `${series} シリーズ記事：\n\n` +
-                filteredArticles.map((filteredArticle) => {
-                    const targetSlug = articles.find((a) => a.title === filteredArticle.title)?.slug;
-                    if (!targetSlug) {
-                        console.error(`エラー: 対応するslugが見つかりません: ${filteredArticle.title}`);
-                        return null;
-                    }
-                    return `[${filteredArticle.title}](https://zenn.dev/solitudera/articles/${targetSlug})`;
-                }).filter(Boolean).join('\n') +
-                `\n\n${SERIES_END}`;
-
-            // 記事内容を行単位で取得し、シリーズリンクブロックを挿入または更新
-            const contentLines = targetArticle.content.split('\n');
-            const startIndex = contentLines.indexOf(SERIES_START);
-            const endIndex = contentLines.indexOf(SERIES_END);
-
-            if (startIndex !== -1 && endIndex !== -1) {
-                // 既存のシリーズリンクブロックを更新
-                contentLines.splice(startIndex, endIndex - startIndex + 1, ...seriesLinks.split('\n'));
-                console.log(`シリーズリンクを更新しました: ${targetArticle.file}`);
-            } else {
-                // シリーズリンクブロックが存在しない場合は先頭に追加
-                contentLines.unshift(seriesLinks);
-                console.log(`シリーズリンクを挿入しました: ${targetArticle.file}`);
-            }
-
-            // コンテンツ再構築
-            let updatedContent = contentLines.join('\n').replace(/\n{3,}/g, '\n\n'); // 連続する空行を整理
-            updatedContent = replaceInlineSeriesLinks(updatedContent, articles); // <<<タイトル>>> 表記をZennリンクへ変換
-
-            const newFileContent = matter.stringify(updatedContent, targetArticle.metadata);
-
-            fs.writeFileSync(targetArticle.filePath, newFileContent, 'utf8');
+    for (const [articleId, target] of context.targetArticles) {
+        documents.set(articleId, {
+            articleId,
+            slug: target.slug,
+            data: target.data,
+            content: target.content,
+            raw: target.raw,
+            lineEndingSource: target.raw,
         });
-    });
+    }
 
-    console.log('シリーズリンクの生成と更新が完了しました。');
+    const outputs = generateArticleOutputs({
+        documents,
+        sourceArticles: context.sourceArticles,
+        mapEntries: context.mapEntries,
+    });
+    const changes = [];
+
+    for (const [articleId, output] of outputs) {
+        const target = context.targetArticles.get(articleId);
+        if (output !== target.raw) {
+            changes.push(target.file);
+            if (!checkOnly) {
+                fs.writeFileSync(target.filePath, output, 'utf8');
+            }
+        }
+    }
+
+    console.log(
+        `${checkOnly ? 'Series check' : 'Series generation'} completed: ${changes.length} change(s).`,
+    );
+    return { changes };
+}
+
+module.exports = {
+    SERIES_END,
+    SERIES_START,
+    buildSeriesGroups,
+    generateArticleOutputs,
+    insertOrReplaceSeriesBlock,
+    matchDocumentLineEndings,
+    replaceInlineArticleLinks,
+    runStandalone,
 };
 
-module.exports = generateSeriesLinksForZenn;
-
 if (require.main === module) {
-    const prePublishDir = process.argv[2];
-    const articlesDir = process.argv[3];
-
-    if (!prePublishDir || !articlesDir) {
-        console.error("エラー: ディレクトリ引数が不足しています。使用方法: node generate-series-links.js <pre-publish-dir> <articles-dir>");
-        process.exit(1);
+    try {
+        runStandalone();
+    } catch (error) {
+        console.error(formatIdentityError(error));
+        process.exitCode = 1;
     }
-
-    generateSeriesLinksForZenn(prePublishDir, articlesDir);
 }

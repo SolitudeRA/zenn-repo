@@ -1,11 +1,11 @@
 ---
-title: これで快適！仕事も日常も支えるWindowsツールリスト
-emoji: "\U0001F6E0"
+article_id: '7e77279a72a8402b18d4165646b34eab'
+title: 'これで快適！仕事も日常も支えるWindowsツールリスト'
+emoji: 🛠
 series: null
 type: idea
 tags:
   - windows
-local_updated_at: '2024-12-25T11:16:57+00:00'
 ---
 
 # はじめに
