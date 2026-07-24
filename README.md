@@ -167,7 +167,7 @@ bootstrap を許可します。
   `article_id` に基づくシリーズ・記事間リンクを生成します。parser からも利用
   される純粋な生成モジュールです。
 
-- **`article-identity.js`**
+- **`article-identity.ts`**
   manifest、binding、source、target、参照の fail-closed 検証を担当します。
 
 `npm run typecheck` は既存 JavaScript の `checkJs` と、移行済み TypeScript の

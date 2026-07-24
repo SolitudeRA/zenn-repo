@@ -139,7 +139,7 @@ const {
     formatIdentityError,
     loadIdentityContext,
     serializeArticleMap,
-}: IdentityModule = require('./article-identity');
+}: IdentityModule = require('./article-identity.ts');
 const {
     generateArticleOutputs,
     matchDocumentLineEndings,

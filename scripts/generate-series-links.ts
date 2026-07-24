@@ -70,7 +70,7 @@ const path: typeof import('node:path') = require('node:path');
 const {
     formatIdentityError,
     loadIdentityContext,
-}: IdentityModule = require('./article-identity');
+}: IdentityModule = require('./article-identity.ts');
 
 const SERIES_START = '<!-- START_SERIES -->';
 const SERIES_END = '<!-- END_SERIES -->';
