@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "checkJs": false,
+    "strict": true
+  },
+  "include": [
+    "scripts/generate-series-links.ts"
+  ]
+}
