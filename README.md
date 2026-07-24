@@ -10,7 +10,8 @@
   Zenn用の記事の自動更新、シリーズリンクの生成、公開プロセスを一元管理。
 
 - **自動化ワークフロー**  
-  GitHub Actionsを活用し、記事の解析、リンク生成、コミット・プッシュを完全自動化。
+  Blog-Project が生成物を含む配布 PR を更新し、このリポジトリの
+  GitHub Actions が読み取り専用で整合性を検証。
 
 - **シリーズリンク生成**  
   記事の `series` 情報に基づき、自動的にリンクを生成し記事に挿入します。
@@ -64,24 +65,30 @@ npm install
 
 ### 記事を公開する手順
 
-1. 自動的にメインリポジトリ`blog-project`のコミットから`pre-publish` に記事を追加または更新します。
-2. GitHub Actions が自動的に以下の処理を実行します：
-   - 記事の解析（`parse-articles.ts`）。
-   - シリーズリンクの生成（`generate-series-links.ts`）。
-   - 記事の変更内容をリポジトリにコミット＆プッシュ。
+1. メインリポジトリ `blog-project` の自動化が `pre-publish` を更新し、
+   parser と series generator で `articles` と `article-map.json` を生成します。
+2. source と生成物を同じ配布 PR にコミットし、Zenn リポジトリへ送ります。
+3. GitHub Actions が PR 内の source、binding、生成物の一致を読み取り専用で検証します。
+4. required check 成功後に GitHub の auto-merge が PR を rebase merge すると、
+   Zenn が追跡済みの
+   `articles` を公開します。main push workflow は再検証だけを行い、
+   追加の commit や push は行いません。
 
 ---
 
 ## GitHub Actions ワークフローの流れ
 
-1. **記事の解析**  
-   `pre-publish` に格納されている記事を解析し、公開可能な形式に変換。
+1. **履歴と記事 ID の検証**
+   PR では base revision、main push では push 前の revision と比較し、
+   binding の変更や削除を fail closed で拒否。
 
-2. **シリーズリンクの生成**  
-   記事の `series` 情報を基にリンクを生成し、記事内に挿入。
+2. **コミット済み生成物の検証**
+   `pre-publish` から再計算した `articles` と `article-map.json` が
+   コミット済み内容と完全に一致することを、ファイルを書き換えずに確認。
 
-3. **リポジトリへの更新内容をコミット＆プッシュ**  
-   更新された記事を Zenn 用リポジトリにコミットし、プッシュ。
+3. **Zenn metadata と event range の検証**
+   ローカルの `zenn-cli` で記事 metadata を検証し、PR または push の
+   対象範囲に whitespace error がないことを確認。
 
 ---
 
@@ -137,17 +144,21 @@ parser と series generator は常に `article_id` で binding を引きます�
 npm ci
 npm run typecheck
 npm test
-npm run check:articles  # 読み取り専用 dry-run
+npm run check:articles  # 読み取り専用。生成物が古ければ非0で終了
 npm run build:articles  # 検証後に生成結果を適用
 npx --no-install zenn list:articles
 ```
 
 `build:articles` は series block と ID link の生成まで1プロセスで完了します。
 検証エラーがある場合、article や map を書き始めません。
-workflow は PR で read-only CI を実行し、main push の場合だけ生成物を commit
-して push します。commit message を理由に検証 job をスキップしません。生成
-commit の再実行は `GITHUB_TOKEN` の標準トリガー制御と、差分がなければ commit
-しない guard で収束させます。
+`check:articles` は同じ生成処理を読み取り専用で実行します。差分が1件でもあれば
+対象パスを表示して非0で終了し、article と map は一切変更しません。生成物を
+意図的に更新するときだけ `build:articles` を実行し、source、`articles`、
+`article-map.json` を同じ PR にコミットしてください。
+
+workflow は PR と main push の両方で read-only CI だけを実行します。commit
+message を理由に検証 job をスキップせず、GitHub Actions 自身による commit や
+push も行いません。
 履歴上の任意の revision と比較する場合は
 `npm run check:articles -- --base-ref=<revision>` を使用します。指定した
 revision やその `article-map.json` を読めない場合は fail closed で停止します。

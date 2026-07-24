@@ -132,6 +132,25 @@ interface BuildArticlesResult {
     context: IdentityContext;
 }
 
+class GeneratedArtifactsOutOfDateError extends Error {
+    changes: string[];
+
+    constructor(changes: readonly string[]) {
+        const normalizedChanges = changes.map((file) =>
+            file.replaceAll('\\', '/'),
+        );
+        super(
+            [
+                `Zenn生成物が最新ではありません (${normalizedChanges.length}件)。`,
+                ...normalizedChanges.map((file) => `- ${file}`),
+                'npm run build:articles を実行し、生成物をコミットしてください。',
+            ].join('\n'),
+        );
+        this.name = 'GeneratedArtifactsOutOfDateError';
+        this.changes = normalizedChanges;
+    }
+}
+
 const fs: typeof import('fs-extra') = require('fs-extra');
 const matter: typeof import('gray-matter') = require('gray-matter');
 const path: typeof import('node:path') = require('node:path');
@@ -316,6 +335,19 @@ function buildArticles(
     };
 }
 
+function checkArticles(
+    options: IdentityOptions = {},
+): BuildArticlesResult {
+    const result = buildArticles({
+        ...options,
+        write: false,
+    });
+    if (result.changes.length > 0) {
+        throw new GeneratedArtifactsOutOfDateError(result.changes);
+    }
+    return result;
+}
+
 function runCli(
     argv: readonly string[] = process.argv.slice(2),
 ): BuildArticlesResult {
@@ -337,7 +369,9 @@ function runCli(
         throw new TypeError('--base-ref may be specified only once.');
     }
     const baseRef = baseRefArguments[0]?.slice('--base-ref='.length);
-    const result = buildArticles({ write: !checkOnly, baseRef });
+    const result = checkOnly
+        ? checkArticles({ baseRef })
+        : buildArticles({ baseRef });
     console.log(
         `${checkOnly ? 'Article build check' : 'Article build'} completed: ${result.changes.length} change(s).`,
     );
@@ -348,8 +382,10 @@ function runCli(
 }
 
 module.exports = {
+    GeneratedArtifactsOutOfDateError,
     buildArticles,
     buildMetadata,
+    checkArticles,
     runCli,
     serializeIntermediateArticle,
 };
