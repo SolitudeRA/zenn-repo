@@ -1,5 +1,6 @@
 ---
-title: Qiita&Zennの同時投稿に対応できるリポジトリを作ってみた（シリーズ記事も対応）
+article_id: '486d1bcca039ee9a86c874e92e62b8e2'
+title: 'Qiita&Zennの同時投稿に対応できるリポジトリを作ってみた（シリーズ記事も対応）'
 series: null
 emoji: ✒
 type: tech
@@ -7,7 +8,6 @@ tags:
   - githubactions
   - blog
   - nodejs
-local_updated_at: '2024-12-25T11:16:57+00:00'
 ---
 
 **Blog-Project** は、Qiita と Zenn に対応し、効率的に記事を管理・公開するために設計されたシステムです。本プロジェクトは、3 つのリポジトリで構成されており、それぞれが独自の役割を果たしながら連携します。この記事では、このシステムの構造と特徴、そしてセットアップ方法について詳しく解説します。

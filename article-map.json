@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "platform": "zenn",
+  "bindings": {
+    "08828ec8b0719d4ae2ae640a6dd4867d": {
+      "slug": "08828ec8b0719d4ae2ae640a6dd4867d",
+      "lifecycle": "active"
+    },
+    "339243802597e8c42bcddfb10b5e94e3": {
+      "slug": "339243802597e8c42bcddfb10b5e94e3",
+      "lifecycle": "active"
+    },
+    "3b5bc7d9db757f0a093e390589a90090": {
+      "slug": "3b5bc7d9db757f0a093e390589a90090",
+      "lifecycle": "active"
+    },
+    "486d1bcca039ee9a86c874e92e62b8e2": {
+      "slug": "486d1bcca039ee9a86c874e92e62b8e2",
+      "lifecycle": "active"
+    },
+    "546e23531bd92a74006cab2ad7627c92": {
+      "slug": "546e23531bd92a74006cab2ad7627c92",
+      "lifecycle": "active"
+    },
+    "63fd8b974d61b06c392d115fbaed72dc": {
+      "slug": "63fd8b974d61b06c392d115fbaed72dc",
+      "lifecycle": "active"
+    },
+    "6ca25021e26b78a81bb4c1f662916c3f": {
+      "slug": "6ca25021e26b78a81bb4c1f662916c3f",
+      "lifecycle": "active"
+    },
+    "7e77279a72a8402b18d4165646b34eab": {
+      "slug": "7e77279a72a8402b18d4165646b34eab",
+      "lifecycle": "active"
+    },
+    "895c8f601bd9217913d1a253512a97a9": {
+      "slug": "895c8f601bd9217913d1a253512a97a9",
+      "lifecycle": "active"
+    },
+    "e908faa15ad46dc89cb87bf2d5b5908c": {
+      "slug": "e908faa15ad46dc89cb87bf2d5b5908c",
+      "lifecycle": "active"
+    },
+    "f066c34618ef9a6b76ffd6b48f47687c": {
+      "slug": "f066c34618ef9a6b76ffd6b48f47687c",
+      "lifecycle": "active"
+    }
+  }
+}

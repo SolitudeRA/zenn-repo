@@ -1,14 +1,23 @@
 name: Publish Articles to Zenn
 
 on:
-    push:
-      branches:
-        - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zenn-publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish_articles:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      ARTICLE_MAP_BASE_REF: ${{ github.event.before }}
 
     steps:
       - uses: actions/checkout@v4
@@ -19,25 +28,31 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22.11.0"
+          cache: npm
 
-      - name: Install Dependencies
-        run: npm install gray-matter fs-extra    
+      - name: Install locked dependencies
+        run: npm ci
 
-      - name: Parse Articles
-        run: node scripts/parse-articles.js
+      - name: Test identity and generation safety
+        run: npm test
 
-      - name: Generate Series Links
-        run: node scripts/generate-series-links.js ./pre-publish ./articles
+      - name: Build ID-bound Zenn articles
+        run: npm run build:articles
 
-      - name: Commit and Push Updates
+      - name: Validate Zenn article metadata
+        run: npx zenn list:articles
+
+      - name: Reject whitespace errors
+        run: git diff --check
+
+      - name: Commit and push generated outputs
         run: |
-          echo "Checking for changes in articles..."
           git config user.name "SolitudeRA"
           git config user.email "solitude@protogalaxy.me"
-          if [ -n "$(git status --porcelain)" ]; then
-            git add .
-            git commit -m "Update articles with GitHub Actions"
-            git push
+          git add -- articles article-map.json
+          if git diff --cached --quiet; then
+            echo "No generated changes detected."
           else
-            echo "No changes detected in articles. Skipping commit."
+            git commit -m "Update articles with GitHub Actions [generated]"
+            git push
           fi

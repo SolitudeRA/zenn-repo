@@ -1,103 +1,211 @@
+'use strict';
+
 const fs = require('fs-extra');
-const path = require('path');
-const crypto = require('crypto');
 const matter = require('gray-matter');
+const path = require('node:path');
+const {
+    formatIdentityError,
+    loadIdentityContext,
+    serializeArticleMap,
+} = require('./article-identity');
+const {
+    generateArticleOutputs,
+    matchDocumentLineEndings,
+} = require('./generate-series-links');
 
-// ソースディレクトリとターゲットディレクトリを定義
-const sourceDir = path.join(__dirname, '../pre-publish');
-const targetDir = path.join(__dirname, '../articles');
-
-// ターゲットディレクトリが存在するか確認
-if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
+function quoted(value) {
+    return JSON.stringify(String(value));
 }
 
-// 唯一のファイル名を生成
-const generateUniqueFileName = (existingFiles) => {
-    let fileName;
-    do {
-        fileName = crypto.randomBytes(16).toString('hex'); // 32文字のランダムな文字列
-    } while (existingFiles.includes(`${fileName}.md`)); // 重複チェック
-    return fileName;
-};
+function buildMetadata(source, target) {
+    const sourceData = source.data;
+    if (!target) {
+        return {
+            title: sourceData.title,
+            emoji: sourceData.emoji || '🌃',
+            type: sourceData.type || 'tech',
+            topics: Array.isArray(sourceData.tags)
+                ? sourceData.tags
+                : ['default'],
+            // Preserve the legacy publication default for this compatibility
+            // slice. Lifecycle withdrawal is intentionally unsupported here.
+            published:
+                sourceData.published !== undefined
+                    ? sourceData.published
+                    : true,
+        };
+    }
 
-// すでに存在する記事のタイトルとファイル情報を収集
-const existingArticles = fs.readdirSync(targetDir)
-    .filter((file) => file.endsWith('.md'))
-    .map((file) => {
-        const filePath = path.join(targetDir, file);
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const { data } = matter(content);
-        return { title: data.title, fileName: file };
-    });
+    const metadata = {
+        // Identity comes from the manifest/map, so a title rename updates the
+        // same slug instead of creating another Zenn article.
+        title: sourceData.title,
+        emoji: target.data.emoji,
+        type: target.data.type,
+        topics: Array.isArray(sourceData.tags)
+            ? sourceData.tags
+            : Array.isArray(target.data.topics)
+              ? target.data.topics
+              : ['default'],
+        // Existing publication status remains target-owned in this minimal
+        // slice. retiring/retired/withdrawn are rejected by the validator.
+        published: target.data.published,
+    };
 
-// `pre-publish` フォルダ内のMarkdownファイルを処理
-fs.readdirSync(sourceDir).forEach((file) => {
-    const sourceFilePath = path.join(sourceDir, file);
+    if (target.data.published_at) {
+        metadata.published_at = target.data.published_at;
+    }
 
-    if (path.extname(file) === '.md') {
-        const sourceContent = fs.readFileSync(sourceFilePath, 'utf-8');
-        const { data: sourceData, content: sourceBody } = matter(sourceContent);
+    return metadata;
+}
 
-        // `title` が存在するか確認
-        if (!sourceData.title) {
-            console.error(`エラー: 必須フィールド (title) が見つかりません: ${file}。スキップします...`);
-            return;
+function serializeIntermediateArticle(metadata, sourceBody) {
+    const frontMatter =
+        '---\n' +
+        `title: ${quoted(metadata.title)}\n` +
+        `emoji: ${quoted(metadata.emoji)}\n` +
+        `type: ${quoted(metadata.type)}\n` +
+        `topics:\n${metadata.topics
+            .map((topic) => `  - ${quoted(topic)}`)
+            .join('\n')}\n` +
+        `published: ${metadata.published}\n` +
+        (metadata.published_at
+            ? `published_at: ${quoted(metadata.published_at)}\n`
+            : '') +
+        '---';
+
+    return `${frontMatter}\n\n${sourceBody}`;
+}
+
+function buildArticles(options = {}) {
+    const write = options.write !== false;
+    const context = loadIdentityContext(options);
+    const nextMapEntries = new Map(context.mapEntries);
+    const documents = new Map();
+
+    for (const [articleId, source] of context.sourceArticles) {
+        let binding = nextMapEntries.get(articleId);
+        if (!binding) {
+            binding = {
+                articleId,
+                slug: articleId,
+                lifecycle: 'active',
+            };
+            nextMapEntries.set(articleId, binding);
         }
 
-        // 既存の記事を確認
-        const existingArticle = existingArticles.find((article) => article.title === sourceData.title);
+        const target = context.targetArticles.get(articleId) || null;
+        const metadata = buildMetadata(source, target);
+        const raw = serializeIntermediateArticle(metadata, source.content);
+        const parsed = matter(raw);
 
-        if (existingArticle) {
-            // 既存ファイルを更新
-            const targetFilePath = path.join(targetDir, existingArticle.fileName);
-            console.log(`既存の記事を更新中: ${sourceData.title}`);
+        documents.set(articleId, {
+            articleId,
+            slug: binding.slug,
+            file: `${binding.slug}.md`,
+            filePath: path.join(context.targetDir, `${binding.slug}.md`),
+            data: parsed.data,
+            content: parsed.content,
+            raw,
+            lineEndingSource: target?.raw || raw,
+        });
+    }
 
-            const targetContent = fs.readFileSync(targetFilePath, 'utf-8');
-            const { data: targetData } = matter(targetContent);
+    const outputs = generateArticleOutputs({
+        documents,
+        sourceArticles: context.sourceArticles,
+        mapEntries: nextMapEntries,
+    });
+    const canonicalMapOutput = serializeArticleMap(nextMapEntries);
+    const changes = [];
 
-            // 更新時にもsourceData.tagsが存在すればそれをtopicsに反映
-            const updatedTopics = Array.isArray(sourceData.tags) 
-                ? sourceData.tags 
-                : (Array.isArray(targetData.topics) ? targetData.topics : ['default']);
-
-            const frontMatter = `---\n` +
-                `title: "${targetData.title}"\n` +
-                `emoji: "${targetData.emoji}"\n` +
-                `type: "${targetData.type}"\n` +
-                `topics:\n${updatedTopics.map((t) => `  - "${t}"`).join('\n')}\n` +
-                `published: ${targetData.published}\n` +
-                (targetData.published_at ? `published_at: "${targetData.published_at}"\n` : '') +
-                `---`;
-
-            const updatedContent = `${frontMatter}\n\n${sourceBody}`;
-            fs.writeFileSync(targetFilePath, updatedContent, 'utf-8');
-            console.log(`更新しました: ${targetFilePath}`);
-        } else {
-            // 新しい記事を作成
-            const uniqueFileName = generateUniqueFileName(existingArticles.map((article) => article.fileName));
-            const targetFilePath = path.join(targetDir, `${uniqueFileName}.md`);
-
-            const metadata = {
-                title: sourceData.title,
-                emoji: sourceData.emoji || '🌃',
-                type: sourceData.type || 'tech',
-                // tagsフィールドをtopicsへ変換する
-                topics: Array.isArray(sourceData.tags) ? sourceData.tags : ['default'],
-                published: sourceData.published !== undefined ? sourceData.published : true,
-            };
-
-            const frontMatter = `---\n` +
-                `title: "${metadata.title}"\n` +
-                `emoji: "${metadata.emoji}"\n` +
-                `type: "${metadata.type}"\n` +
-                `topics:\n${metadata.topics.map((topic) => `  - "${topic}"`).join('\n')}\n` +
-                `published: ${metadata.published}\n` +
-                `---`;
-
-            const updatedContent = `${frontMatter}\n\n${sourceBody}`;
-            fs.writeFileSync(targetFilePath, updatedContent, 'utf-8');
-            console.log(`新規作成: ${targetFilePath}`);
+    for (const [articleId, output] of outputs) {
+        const document = documents.get(articleId);
+        const oldOutput = context.targetArticles.get(articleId)?.raw;
+        if (output !== oldOutput) {
+            changes.push(path.relative(context.repoRoot, document.filePath));
         }
     }
-});
+
+    let oldMapOutput = null;
+    try {
+        oldMapOutput = fs.readFileSync(context.mapPath, 'utf8');
+    } catch {
+        // loadIdentityContext already reports a missing/invalid map. This is
+        // only defensive for callers replacing the file between phases.
+    }
+    const mapOutput =
+        oldMapOutput === null
+            ? canonicalMapOutput
+            : matchDocumentLineEndings(
+                  canonicalMapOutput,
+                  oldMapOutput,
+              );
+    if (mapOutput !== oldMapOutput) {
+        changes.push(path.relative(context.repoRoot, context.mapPath));
+    }
+
+    // Every identity, source, target and reference invariant has been checked
+    // before this point. No validation path below performs a partial write.
+    if (write) {
+        for (const [articleId, output] of outputs) {
+            const document = documents.get(articleId);
+            const oldOutput = context.targetArticles.get(articleId)?.raw;
+            if (output !== oldOutput) {
+                fs.writeFileSync(document.filePath, output, 'utf8');
+            }
+        }
+        if (mapOutput !== oldMapOutput) {
+            fs.writeFileSync(context.mapPath, mapOutput, 'utf8');
+        }
+    }
+
+    return {
+        changes: changes.sort(),
+        outputs,
+        mapOutput,
+        context,
+    };
+}
+
+function runCli(argv = process.argv.slice(2)) {
+    const checkOnly = argv.includes('--check');
+    const baseRefArguments = argv.filter((argument) =>
+        argument.startsWith('--base-ref='),
+    );
+    const unknown = argv.filter(
+        (argument) =>
+            argument !== '--check' && !argument.startsWith('--base-ref='),
+    );
+    if (unknown.length > 0) {
+        throw new TypeError(`Unknown argument(s): ${unknown.join(', ')}`);
+    }
+    if (baseRefArguments.length > 1) {
+        throw new TypeError('--base-ref may be specified only once.');
+    }
+    const baseRef = baseRefArguments[0]?.slice('--base-ref='.length);
+    const result = buildArticles({ write: !checkOnly, baseRef });
+    console.log(
+        `${checkOnly ? 'Article build check' : 'Article build'} completed: ${result.changes.length} change(s).`,
+    );
+    for (const file of result.changes) {
+        console.log(`- ${file.replaceAll('\\', '/')}`);
+    }
+    return result;
+}
+
+module.exports = {
+    buildArticles,
+    buildMetadata,
+    runCli,
+    serializeIntermediateArticle,
+};
+
+if (require.main === module) {
+    try {
+        runCli();
+    } catch (error) {
+        console.error(formatIdentityError(error));
+        process.exitCode = 1;
+    }
+}

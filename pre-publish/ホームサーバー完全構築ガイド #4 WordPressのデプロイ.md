@@ -1,7 +1,8 @@
 ---
+article_id: 'e908faa15ad46dc89cb87bf2d5b5908c'
 title: 'ホームサーバー完全構築ガイド #4 WordPressのデプロイ'
 series: ホームサーバー完全構築ガイド
-emoji: "\U0001F303"
+emoji: 🌃
 type: tech
 tags:
   - WordPress
@@ -9,7 +10,7 @@ tags:
   - nginx
   - homeserver
   - self-hosting
-local_updated_at: '2024-12-25T11:16:57+00:00'
+local_updated_at: '2024-11-11T18:53:24+09:00'
 ---
 
 # はじめに
@@ -140,7 +141,7 @@ WordPressが使用するデータベースと専用ユーザーをMySQLで作成
 
 ## Nginxの設定
 
-Nginxのインストールは<<<ホームサーバー完全構築ガイド #2 インフラの構築>>>を参照してください。
+Nginxのインストールは<<<article:339243802597e8c42bcddfb10b5e94e3>>>を参照してください。
 
 NginxがWordPressサイトを正しく解析できるよう、`/etc/nginx/sites-available/`に新しい設定ファイル`wordpress`を作成し、以下の内容を追加します：
 
