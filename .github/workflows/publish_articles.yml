@@ -27,7 +27,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "22.11.0"
+          node-version: "24.18.0"
           package-manager-cache: false
 
       - name: Install locked dependencies

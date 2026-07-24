@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build:articles": "node scripts/parse-articles.js",
     "check:articles": "node scripts/parse-articles.js --check",
@@ -12,7 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "fs-extra": "^11.2.0",
+    "fs-extra": "^11.4.0",
     "gray-matter": "^4.0.3",
     "zenn-cli": "0.5.2"
   }
