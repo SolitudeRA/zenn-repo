@@ -50,6 +50,9 @@ interface BuildArticlesResult {
 
 interface ParserModule {
     buildArticles(options: BuildArticlesOptions): BuildArticlesResult;
+    checkArticles(
+        options: Omit<BuildArticlesOptions, 'write'>,
+    ): BuildArticlesResult;
 }
 
 interface ArticleBinding {
@@ -108,7 +111,7 @@ const {
     compareBindingHistory,
 } = identityModule;
 const parserModule: ParserModule = require('../scripts/parse-articles.ts');
-const { buildArticles } = parserModule;
+const { buildArticles, checkArticles } = parserModule;
 
 const ID_A = '08828ec8b0719d4ae2ae640a6dd4867d';
 const ID_B = '339243802597e8c42bcddfb10b5e94e3';
@@ -289,7 +292,7 @@ function buildFixtureArticles(
     });
 }
 
-test('publish workflow keeps pull requests read-only and publishes main pushes', () => {
+test('workflow validates pull requests and main pushes without repository writes', () => {
     const workflow = fs.readFileSync(
         path.join(
             __dirname,
@@ -313,19 +316,84 @@ test('publish workflow keeps pull requests read-only and publishes main pushes',
     );
     assert.match(
         workflow,
-        /^  publish_articles:\r?\n\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'[\s\S]*?\n\s+permissions:\r?\n\s+contents: write$/m,
+        /^  validate_main_push:\r?\n\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'$/m,
     );
     assert.match(
         workflow,
         /^\s+ARTICLE_MAP_BASE_REF: \$\{\{ github\.event\.before \}\}$/m,
     );
-    assert.match(
-        workflow,
-        /- name: Commit and push generated outputs\r?\n\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/m,
+    assert.equal(
+        (workflow.match(/run: npm ci/g) || []).length,
+        2,
+    );
+    assert.equal(
+        (workflow.match(/run: npm run typecheck/g) || []).length,
+        2,
+    );
+    assert.equal(
+        (workflow.match(/run: npm test/g) || []).length,
+        2,
+    );
+    assert.equal(
+        (workflow.match(/run: npm run check:articles/g) || []).length,
+        2,
+    );
+    assert.equal(
+        (workflow.match(/run: npx --no-install zenn list:articles/g) || [])
+            .length,
+        2,
+    );
+    assert.equal(
+        (
+            workflow.match(
+                /run: git diff --check "\$ARTICLE_MAP_BASE_REF" HEAD --/g,
+            ) || []
+        ).length,
+        2,
     );
     assert.match(workflow, /node-version-file: "\.node-version"/);
     assert.doesNotMatch(workflow, /^\s+node-version:/m);
-    assert.match(workflow, /npx --no-install zenn list:articles/);
+    assert.doesNotMatch(workflow, /contents: write/);
+    assert.doesNotMatch(workflow, /run: npm run build:articles/);
+    assert.doesNotMatch(workflow, /\bgit (?:add|commit|push)\b/);
+});
+
+test('strict article check is read-only and fails for stale generated output', (t) => {
+    const fixture = createFixture(t);
+    buildFixtureArticles(fixture);
+
+    const mapPath = path.join(fixture.repoRoot, 'article-map.json');
+    const targetPath = path.join(fixture.targetDir, `${ID_A}.md`);
+    const mapBefore = sha256(mapPath);
+    const targetBefore = sha256(targetPath);
+    const cleanResult = checkArticles({
+        repoRoot: fixture.repoRoot,
+        skipHistory: true,
+    });
+    assert.deepEqual(cleanResult.changes, []);
+
+    fs.writeFileSync(
+        path.join(fixture.sourceDir, 'article-a.md'),
+        sourceMarkdown('Changed title'),
+        'utf8',
+    );
+
+    assert.throws(
+        () =>
+            checkArticles({
+                repoRoot: fixture.repoRoot,
+                skipHistory: true,
+            }),
+        (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.name, 'GeneratedArtifactsOutOfDateError');
+            assert.match(error.message, /Zenn生成物が最新ではありません/);
+            assert.match(error.message, new RegExp(`articles/${ID_A}\\.md`));
+            return true;
+        },
+    );
+    assert.equal(sha256(mapPath), mapBefore);
+    assert.equal(sha256(targetPath), targetBefore);
 });
 
 test('CRLF article-map does not create line-ending churn', (t) => {
