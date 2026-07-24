@@ -50,7 +50,7 @@ npm install
 ├── pre-publish/     # 公開準備中の記事が格納されるディレクトリ
 ├── scripts/         # 自動化スクリプト
 │   ├── parse-articles.js         # 記事を解析し、公開準備を行うスクリプト
-│   ├── generate-series-links.js  # シリーズリンクを生成するスクリプト
+│   ├── generate-series-links.ts  # シリーズリンクを生成するスクリプト
 ├── .github/         # GitHub Actionsの設定
 │   └── workflows/
 │       └── publish_articles.yml  # 記事公開を自動化するワークフロー
@@ -67,7 +67,7 @@ npm install
 1. 自動的にメインリポジトリ`blog-project`のコミットから`pre-publish` に記事を追加または更新します。
 2. GitHub Actions が自動的に以下の処理を実行します：
    - 記事の解析（`parse-articles.js`）。
-   - シリーズリンクの生成（`generate-series-links.js`）。
+   - シリーズリンクの生成（`generate-series-links.ts`）。
    - 記事の変更内容をリポジトリにコミット＆プッシュ。
 
 ---
@@ -163,15 +163,16 @@ bootstrap を許可します。
 - **`parse-articles.js`**  
   manifest と map を検証し、ID binding を維持したまま最終記事を生成します。
 
-- **`generate-series-links.js`**  
+- **`generate-series-links.ts`**
   `article_id` に基づくシリーズ・記事間リンクを生成します。parser からも利用
   される純粋な生成モジュールです。
 
 - **`article-identity.js`**
   manifest、binding、source、target、参照の fail-closed 検証を担当します。
 
-`npm run typecheck` は `tsconfig.json` に従って既存 JavaScript を静的検査します。
-この段階ではファイルを生成せず、公開時の Node.js 実行方法も変更しません。
+`npm run typecheck` は既存 JavaScript の `checkJs` と、移行済み TypeScript の
+strict 検査を実行します。ファイルは生成しません。`generate-series-links.ts` は
+Node.js 24 のネイティブ型除去を使い、CommonJS のまま実行されます。
 
 ### デバッグ
 

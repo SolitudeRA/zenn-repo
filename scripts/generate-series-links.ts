@@ -1,25 +1,96 @@
 'use strict';
 
-const fs = require('fs-extra');
-const matter = require('gray-matter');
-const path = require('node:path');
+type ArticleId = string;
+
+interface ArticleFrontMatter {
+    title: string;
+    series?: unknown;
+    [key: string]: unknown;
+}
+
+interface SourceArticle {
+    articleId: ArticleId;
+    file: string;
+    data: ArticleFrontMatter;
+    references: readonly unknown[];
+}
+
+interface MapEntry {
+    slug: string;
+}
+
+interface ArticleDocument {
+    articleId: ArticleId;
+    slug: string;
+    data: Record<string, unknown>;
+    content: string;
+    raw: string;
+    lineEndingSource?: string;
+}
+
+interface TargetArticle {
+    file: string;
+    filePath: string;
+    slug: string;
+    data: Record<string, unknown>;
+    content: string;
+    raw: string;
+}
+
+interface IdentityContext {
+    sourceArticles: Map<ArticleId, SourceArticle>;
+    targetArticles: Map<ArticleId, TargetArticle>;
+    mapEntries: Map<ArticleId, MapEntry>;
+}
+
+interface IdentityOptions {
+    repoRoot?: string;
+    sourceDir?: string;
+    targetDir?: string;
+}
+
+interface IdentityModule {
+    formatIdentityError(error: unknown): string;
+    loadIdentityContext(options: IdentityOptions): IdentityContext;
+}
+
+interface GenerateArticleOptions {
+    documents: ReadonlyMap<ArticleId, ArticleDocument>;
+    sourceArticles: ReadonlyMap<ArticleId, SourceArticle>;
+    mapEntries: ReadonlyMap<ArticleId, MapEntry>;
+}
+
+interface StandaloneResult {
+    changes: string[];
+}
+
+const fs: typeof import('fs-extra') = require('fs-extra');
+const matter: typeof import('gray-matter') = require('gray-matter');
+const path: typeof import('node:path') = require('node:path');
 const {
     formatIdentityError,
     loadIdentityContext,
-} = require('./article-identity');
+}: IdentityModule = require('./article-identity');
 
 const SERIES_START = '<!-- START_SERIES -->';
 const SERIES_END = '<!-- END_SERIES -->';
 const ZENN_ARTICLE_BASE = 'https://zenn.dev/solitudera/articles';
 
-function matchDocumentLineEndings(content, referenceContent) {
+function matchDocumentLineEndings(
+    content: string,
+    referenceContent: string,
+): string {
     const normalized = content.replace(/\r\n/g, '\n');
     return referenceContent.includes('\r\n')
         ? normalized.replace(/\n/g, '\r\n')
         : normalized;
 }
 
-function replaceInlineArticleLinks(content, sourceArticles, mapEntries) {
+function replaceInlineArticleLinks(
+    content: string,
+    sourceArticles: ReadonlyMap<ArticleId, SourceArticle>,
+    mapEntries: ReadonlyMap<ArticleId, MapEntry>,
+): string {
     return content.replace(
         /<<<article:([a-z0-9_-]+)>>>/g,
         (match, articleId) => {
@@ -36,20 +107,19 @@ function replaceInlineArticleLinks(content, sourceArticles, mapEntries) {
     );
 }
 
-function buildSeriesGroups(sourceArticles) {
-    const groups = new Map();
+function buildSeriesGroups(
+    sourceArticles: ReadonlyMap<ArticleId, SourceArticle>,
+): Map<string, SourceArticle[]> {
+    const groups = new Map<string, SourceArticle[]>();
     const sortedSources = [...sourceArticles.values()].sort((left, right) =>
         left.file.localeCompare(right.file),
     );
 
     for (const source of sortedSources) {
-        if (
-            typeof source.data.series !== 'string' ||
-            source.data.series.trim().length === 0
-        ) {
+        const series = source.data.series;
+        if (typeof series !== 'string' || series.trim().length === 0) {
             continue;
         }
-        const series = source.data.series;
         const members = groups.get(series) || [];
         members.push(source);
         groups.set(series, members);
@@ -59,16 +129,16 @@ function buildSeriesGroups(sourceArticles) {
 }
 
 function insertOrReplaceSeriesBlock(
-    content,
-    source,
-    seriesMembers,
-    mapEntries,
-) {
+    content: string,
+    source: SourceArticle,
+    seriesMembers: readonly SourceArticle[],
+    mapEntries: ReadonlyMap<ArticleId, MapEntry>,
+): string {
     const links = seriesMembers
         .filter((member) => member.articleId !== source.articleId)
         .map((member) => {
             const binding = mapEntries.get(member.articleId);
-            return `[${member.data.title}](${ZENN_ARTICLE_BASE}/${binding.slug})`;
+            return `[${member.data.title}](${ZENN_ARTICLE_BASE}/${binding!.slug})`;
         });
 
     const seriesLinks =
@@ -104,8 +174,8 @@ function generateArticleOutputs({
     documents,
     sourceArticles,
     mapEntries,
-}) {
-    const outputs = new Map();
+}: GenerateArticleOptions): Map<ArticleId, string> {
+    const outputs = new Map<ArticleId, string>();
     const seriesGroups = buildSeriesGroups(sourceArticles);
 
     for (const [articleId, document] of documents) {
@@ -123,12 +193,15 @@ function generateArticleOutputs({
             typeof source.data.series === 'string'
                 ? source.data.series
                 : null;
+        const seriesMembers = series
+            ? seriesGroups.get(series)
+            : undefined;
 
-        if (series && seriesGroups.has(series)) {
+        if (seriesMembers) {
             content = insertOrReplaceSeriesBlock(
                 content,
                 source,
-                seriesGroups.get(series),
+                seriesMembers,
                 mapEntries,
             );
             needsMatterSerialization = true;
@@ -141,8 +214,8 @@ function generateArticleOutputs({
         );
 
         const output = needsMatterSerialization
-                ? matter.stringify(content, document.data)
-                : document.raw;
+            ? matter.stringify(content, document.data)
+            : document.raw;
         outputs.set(
             articleId,
             matchDocumentLineEndings(
@@ -155,12 +228,14 @@ function generateArticleOutputs({
     return outputs;
 }
 
-function runStandalone(argv = process.argv.slice(2)) {
+function runStandalone(
+    argv: readonly string[] = process.argv.slice(2),
+): StandaloneResult {
     const positional = argv.filter((argument) => argument !== '--check');
     const checkOnly = argv.includes('--check');
     if (positional.length !== 2) {
         throw new TypeError(
-            '使用方法: node scripts/generate-series-links.js <pre-publish-dir> <articles-dir> [--check]',
+            '使用方法: node scripts/generate-series-links.ts <pre-publish-dir> <articles-dir> [--check]',
         );
     }
 
@@ -172,7 +247,7 @@ function runStandalone(argv = process.argv.slice(2)) {
         sourceDir,
         targetDir,
     });
-    const documents = new Map();
+    const documents = new Map<ArticleId, ArticleDocument>();
 
     for (const [articleId, target] of context.targetArticles) {
         documents.set(articleId, {
@@ -190,10 +265,10 @@ function runStandalone(argv = process.argv.slice(2)) {
         sourceArticles: context.sourceArticles,
         mapEntries: context.mapEntries,
     });
-    const changes = [];
+    const changes: string[] = [];
 
     for (const [articleId, output] of outputs) {
-        const target = context.targetArticles.get(articleId);
+        const target = context.targetArticles.get(articleId)!;
         if (output !== target.raw) {
             changes.push(target.file);
             if (!checkOnly) {

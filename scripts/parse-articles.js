@@ -8,10 +8,12 @@ const {
     loadIdentityContext,
     serializeArticleMap,
 } = require('./article-identity');
+/** @type {any} Native CommonJS boundary until this caller is migrated. */
+const seriesLinkModule = require('./generate-series-links.ts');
 const {
     generateArticleOutputs,
     matchDocumentLineEndings,
-} = require('./generate-series-links');
+} = seriesLinkModule;
 
 function quoted(value) {
     return JSON.stringify(String(value));

@@ -10,7 +10,7 @@
     "build:articles": "node scripts/parse-articles.js",
     "check:articles": "node scripts/parse-articles.js --check",
     "test": "node --test --experimental-test-isolation=none",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.strict.json"
   },
   "keywords": [],
   "author": "",
