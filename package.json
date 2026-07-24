@@ -1,23 +1,20 @@
 {
   "name": "zenn-repo",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "build:articles": "node scripts/parse-articles.ts",
     "check:articles": "node scripts/parse-articles.ts --check",
-    "test": "node --test --experimental-test-isolation=none",
+    "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "dependencies": {
-    "fs-extra": "^11.4.0",
-    "gray-matter": "^4.0.3",
+    "fs-extra": "11.4.0",
+    "gray-matter": "4.0.3",
     "zenn-cli": "0.5.2"
   },
   "devDependencies": {

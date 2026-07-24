@@ -102,10 +102,11 @@ slug を変えると別記事になるため、このリポジトリではタイ
     重複は拒否されます。
 - `article-map.json`
   - Zenn 固有の `article_id -> slug` binding です。
-  - 既存 binding の slug・lifecycle の変更や削除は禁止です。CI では
-    push event の `${{ github.event.before }}` を明示的な比較元として使い、
-    複数 commit を含む push でも push 前の map と比較します。新しい binding
-    の追加だけが通常処理で許可されます。
+  - 既存 binding の slug・lifecycle の変更や削除は禁止です。CI では PR の
+    `${{ github.event.pull_request.base.sha }}`、main push の
+    `${{ github.event.before }}` を明示的な比較元として使います。複数 commit
+    を含む変更でも変更前の map と比較し、新しい binding の追加だけを通常処理
+    として許可します。
 
 現在の安全切片が処理する状態は
 `article_state: active` かつ `targets.zenn.desired: published` のみです。
@@ -138,14 +139,15 @@ npm run typecheck
 npm test
 npm run check:articles  # 読み取り専用 dry-run
 npm run build:articles  # 検証後に生成結果を適用
-npx zenn list:articles
+npx --no-install zenn list:articles
 ```
 
 `build:articles` は series block と ID link の生成まで1プロセスで完了します。
 検証エラーがある場合、article や map を書き始めません。
-workflow は commit message を理由に検証 job をスキップしません。生成 commit の
-再実行は `GITHUB_TOKEN` の標準トリガー制御と、差分がなければ commit しない
-guard で収束させます。
+workflow は PR で read-only CI を実行し、main push の場合だけ生成物を commit
+して push します。commit message を理由に検証 job をスキップしません。生成
+commit の再実行は `GITHUB_TOKEN` の標準トリガー制御と、差分がなければ commit
+しない guard で収束させます。
 履歴上の任意の revision と比較する場合は
 `npm run check:articles -- --base-ref=<revision>` を使用します。指定した
 revision やその `article-map.json` を読めない場合は fail closed で停止します。
