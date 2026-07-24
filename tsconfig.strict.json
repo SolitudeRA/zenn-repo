@@ -5,6 +5,7 @@
     "strict": true
   },
   "include": [
+    "scripts/article-identity.ts",
     "scripts/generate-series-links.ts",
     "scripts/parse-articles.ts"
   ]

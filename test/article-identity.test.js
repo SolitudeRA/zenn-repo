@@ -9,10 +9,12 @@ const path = require('node:path');
 const test = require('node:test');
 const matter = require('gray-matter');
 
+/** @type {any} Native CommonJS boundary until this test is migrated. */
+const identityModule = require('../scripts/article-identity.ts');
 const {
     IdentityValidationError,
     compareBindingHistory,
-} = require('../scripts/article-identity');
+} = identityModule;
 /** @type {any} Native CommonJS boundary until this test is migrated. */
 const parserModule = require('../scripts/parse-articles.ts');
 const { buildArticles } = parserModule;

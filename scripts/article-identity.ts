@@ -1,17 +1,138 @@
 'use strict';
 
-const fs = require('fs-extra');
-const matter = require('gray-matter');
-const { spawnSync } = require('node:child_process');
-const os = require('node:os');
-const path = require('node:path');
+type UnknownRecord = Record<string, unknown>;
+type ArticleId = string;
+
+interface Diagnostic {
+    code: string;
+    file: string;
+    message: string;
+}
+
+interface GitExecutionResult {
+    error?: Error;
+    signal?: NodeJS.Signals | null;
+    status: number | null;
+    stdout: string;
+    stderr: string;
+}
+
+type GitRunner = (
+    repoRoot: string,
+    args: readonly string[],
+) => GitExecutionResult;
+
+interface ArticleMapEntry {
+    articleId: ArticleId;
+    slug: string;
+    lifecycle: string;
+}
+
+interface ManifestEntry {
+    articleId: ArticleId;
+    source: string;
+    file: string;
+    articleState: string;
+    desired: string;
+}
+
+interface ArticleReference {
+    articleId: ArticleId;
+    start: number;
+    end: number;
+}
+
+interface ParsedMarkdown {
+    raw: string;
+    data: UnknownRecord;
+    content: string;
+}
+
+interface SourceArticle {
+    articleId: ArticleId;
+    file: string;
+    filePath: string;
+    data: UnknownRecord;
+    content: string;
+    references: ArticleReference[];
+}
+
+interface TargetArticle {
+    articleId: ArticleId;
+    slug: string;
+    file: string;
+    filePath: string;
+    data: UnknownRecord;
+    content: string;
+    raw: string;
+}
+
+interface IdentityOptions {
+    repoRoot?: string;
+    sourceDir?: string;
+    targetDir?: string;
+    manifestPath?: string;
+    mapPath?: string;
+    baseRef?: string;
+    gitRunner?: GitRunner;
+    previousMapData?: unknown;
+    skipHistory?: boolean;
+}
+
+interface HistoricalValidationOptions {
+    repoRoot: string;
+    mapPath: string;
+    baseRef?: string;
+    gitRunner?: GitRunner;
+    previousMapData?: unknown;
+    skipHistory?: boolean;
+}
+
+interface IdentityContext {
+    repoRoot: string;
+    sourceDir: string;
+    targetDir: string;
+    manifestPath: string;
+    mapPath: string;
+    mapData: unknown | null;
+    mapEntries: Map<ArticleId, ArticleMapEntry>;
+    manifestData: unknown | null;
+    manifestEntries: Map<ArticleId, ManifestEntry>;
+    sourceArticles: Map<ArticleId, SourceArticle>;
+    targetArticles: Map<ArticleId, TargetArticle>;
+}
+
+interface ArticleMapReadResult {
+    data: unknown | null;
+    entries: Map<ArticleId, ArticleMapEntry>;
+}
+
+interface ManifestReadResult {
+    data: unknown | null;
+    entries: Map<ArticleId, ManifestEntry>;
+    files?: Map<string, ArticleId>;
+}
+
+interface SerializedBinding {
+    slug: string;
+    lifecycle: string;
+}
+
+const fs: typeof import('fs-extra') = require('fs-extra');
+const matter: typeof import('gray-matter') = require('gray-matter');
+const { spawnSync }: typeof import('node:child_process') =
+    require('node:child_process');
+const os: typeof import('node:os') = require('node:os');
+const path: typeof import('node:path') = require('node:path');
 
 const ARTICLE_ID_PATTERN = /^[0-9a-f]{32}$/;
 const SLUG_PATTERN = /^[a-z0-9_-]{12,50}$/;
 const ARTICLE_REFERENCE_PATTERN = /^article:([a-z0-9_-]+)$/;
 
 class IdentityValidationError extends Error {
-    constructor(diagnostics) {
+    diagnostics: Diagnostic[];
+
+    constructor(diagnostics: Diagnostic[]) {
         super(
             `Article identity validation failed with ${diagnostics.length} error(s).`,
         );
@@ -20,11 +141,11 @@ class IdentityValidationError extends Error {
     }
 }
 
-function diagnostic(code, file, message) {
+function diagnostic(code: string, file: string, message: string): Diagnostic {
     return { code, file: file.replaceAll('\\', '/'), message };
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is UnknownRecord {
     return (
         value !== null &&
         typeof value === 'object' &&
@@ -32,11 +153,14 @@ function isPlainObject(value) {
     );
 }
 
-function isValidArticleId(value) {
+function isValidArticleId(value: unknown): value is ArticleId {
     return typeof value === 'string' && ARTICLE_ID_PATTERN.test(value);
 }
 
-function defaultGitRunner(repoRoot, args) {
+function defaultGitRunner(
+    repoRoot: string,
+    args: readonly string[],
+): GitExecutionResult {
     // Codex's Windows sandbox cannot pipe child-process output directly.
     // Capture it through private temporary files so local validation and CI
     // use the same fail-closed Git protocol.
@@ -45,8 +169,8 @@ function defaultGitRunner(repoRoot, args) {
     );
     const stdoutPath = path.join(captureDir, 'stdout');
     const stderrPath = path.join(captureDir, 'stderr');
-    let stdoutFd;
-    let stderrFd;
+    let stdoutFd: number | undefined;
+    let stderrFd: number | undefined;
 
     try {
         stdoutFd = fs.openSync(stdoutPath, 'wx');
@@ -79,12 +203,19 @@ function defaultGitRunner(repoRoot, args) {
     }
 }
 
-function runGitChecked(gitRunner, repoRoot, args, operation) {
-    let result;
+function runGitChecked(
+    gitRunner: GitRunner,
+    repoRoot: string,
+    args: readonly string[],
+    operation: string,
+): string {
+    let result: GitExecutionResult;
     try {
         result = gitRunner(repoRoot, args);
     } catch (error) {
-        throw new Error(`${operation}を実行できません: ${error.message}`);
+        throw new Error(
+            `${operation}を実行できません: ${(error as Error).message}`,
+        );
     }
 
     if (!isPlainObject(result)) {
@@ -113,8 +244,12 @@ function runGitChecked(gitRunner, repoRoot, args, operation) {
     return result.stdout;
 }
 
-function readJson(filePath, label, diagnostics) {
-    let text;
+function readJson(
+    filePath: string,
+    label: string,
+    diagnostics: Diagnostic[],
+): unknown | null {
+    let text: string;
     try {
         text = fs.readFileSync(filePath, 'utf8');
     } catch (error) {
@@ -122,7 +257,7 @@ function readJson(filePath, label, diagnostics) {
             diagnostic(
                 'JSON_NOT_FOUND',
                 filePath,
-                `${label}を読み取れません: ${error.message}`,
+                `${label}を読み取れません: ${(error as Error).message}`,
             ),
         );
         return null;
@@ -135,23 +270,27 @@ function readJson(filePath, label, diagnostics) {
             diagnostic(
                 'INVALID_JSON',
                 filePath,
-                `${label}をJSONとして解析できません: ${error.message}`,
+                `${label}をJSONとして解析できません: ${(error as Error).message}`,
             ),
         );
         return null;
     }
 }
 
-function readArticleMap(mapPath, diagnostics) {
+function readArticleMap(
+    mapPath: string,
+    diagnostics: Diagnostic[],
+): ArticleMapReadResult {
     const data = readJson(mapPath, 'article map', diagnostics);
-    const entries = new Map();
-    const slugs = new Map();
+    const entries = new Map<ArticleId, ArticleMapEntry>();
+    const slugs = new Map<string, ArticleId>();
 
     if (!data) {
         return { data: null, entries };
     }
 
     if (
+        !isPlainObject(data) ||
         data.schema_version !== 1 ||
         data.platform !== 'zenn' ||
         !isPlainObject(data.bindings)
@@ -229,17 +368,24 @@ function readArticleMap(mapPath, diagnostics) {
     return { data, entries };
 }
 
-function readManifest(manifestPath, diagnostics) {
+function readManifest(
+    manifestPath: string,
+    diagnostics: Diagnostic[],
+): ManifestReadResult {
     const data = readJson(manifestPath, 'distribution manifest', diagnostics);
-    const entries = new Map();
-    const files = new Map();
-    const allArticleIds = new Set();
+    const entries = new Map<ArticleId, ManifestEntry>();
+    const files = new Map<string, ArticleId>();
+    const allArticleIds = new Set<ArticleId>();
 
     if (!data) {
         return { data: null, entries };
     }
 
-    if (data.schema_version !== 1 || !Array.isArray(data.articles)) {
+    if (
+        !isPlainObject(data) ||
+        data.schema_version !== 1 ||
+        !Array.isArray(data.articles)
+    ) {
         diagnostics.push(
             diagnostic(
                 'INVALID_MANIFEST_SCHEMA',
@@ -275,7 +421,10 @@ function readManifest(manifestPath, diagnostics) {
         }
         allArticleIds.add(entry.article_id);
 
-        const zennTarget = entry.targets?.zenn;
+        const targets = isPlainObject(entry.targets)
+            ? entry.targets
+            : undefined;
+        const zennTarget = targets?.zenn;
         if (zennTarget === undefined) {
             continue;
         }
@@ -291,7 +440,10 @@ function readManifest(manifestPath, diagnostics) {
             continue;
         }
 
-        if (!['active', 'retiring', 'retired'].includes(entry.article_state)) {
+        if (
+            typeof entry.article_state !== 'string' ||
+            !['active', 'retiring', 'retired'].includes(entry.article_state)
+        ) {
             diagnostics.push(
                 diagnostic(
                     'INVALID_ARTICLE_STATE',
@@ -302,7 +454,10 @@ function readManifest(manifestPath, diagnostics) {
             continue;
         }
 
-        if (!['published', 'withdrawn'].includes(zennTarget.desired)) {
+        if (
+            typeof zennTarget.desired !== 'string' ||
+            !['published', 'withdrawn'].includes(zennTarget.desired)
+        ) {
             diagnostics.push(
                 diagnostic(
                     'INVALID_ZENN_DESIRED_STATE',
@@ -382,7 +537,7 @@ function readManifest(manifestPath, diagnostics) {
             continue;
         }
 
-        const normalizedEntry = {
+        const normalizedEntry: ManifestEntry = {
             articleId: entry.article_id,
             source: entry.source,
             file: sourceFile,
@@ -397,11 +552,11 @@ function readManifest(manifestPath, diagnostics) {
 }
 
 function compareBindingHistory(
-    previousData,
-    currentData,
-    mapPath,
-    diagnostics,
-) {
+    previousData: unknown,
+    currentData: unknown,
+    mapPath: string,
+    diagnostics: Diagnostic[],
+): void {
     if (
         !isPlainObject(previousData) ||
         previousData.schema_version !== 1 ||
@@ -418,7 +573,10 @@ function compareBindingHistory(
         return;
     }
 
-    if (!isPlainObject(currentData?.bindings)) {
+    if (
+        !isPlainObject(currentData) ||
+        !isPlainObject(currentData.bindings)
+    ) {
         return;
     }
 
@@ -437,22 +595,28 @@ function compareBindingHistory(
             continue;
         }
 
+        const previousBinding = previous as UnknownRecord;
+        const currentBinding = current as UnknownRecord;
         if (
-            previous.slug !== current.slug ||
-            previous.lifecycle !== current.lifecycle
+            previousBinding.slug !== currentBinding.slug ||
+            previousBinding.lifecycle !== currentBinding.lifecycle
         ) {
             diagnostics.push(
                 diagnostic(
                     'ARTICLE_BINDING_MUTATED',
                     mapPath,
-                    `${articleId}の既存bindingは変更できません（${previous.slug}/${previous.lifecycle} -> ${current.slug}/${current.lifecycle}）。`,
+                    `${articleId}の既存bindingは変更できません（${previousBinding.slug}/${previousBinding.lifecycle} -> ${currentBinding.slug}/${currentBinding.lifecycle}）。`,
                 ),
             );
         }
     }
 }
 
-function validateHistoricalBindings(options, currentData, diagnostics) {
+function validateHistoricalBindings(
+    options: HistoricalValidationOptions,
+    currentData: unknown,
+    diagnostics: Diagnostic[],
+): void {
     const {
         repoRoot,
         mapPath,
@@ -522,7 +686,7 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
             diagnostic(
                 'ARTICLE_MAP_BASE_REF_UNREADABLE',
                 mapPath,
-                `比較元revision ${baseRef} を検証できません: ${error.message}`,
+                `比較元revision ${baseRef} を検証できません: ${(error as Error).message}`,
             ),
         );
         return;
@@ -549,14 +713,14 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
             diagnostic(
                 'HISTORICAL_ARTICLE_MAP_TREE_UNREADABLE',
                 mapPath,
-                `${baseRef}のtreeを検証できません: ${error.message}`,
+                `${baseRef}のtreeを検証できません: ${(error as Error).message}`,
             ),
         );
         return;
     }
 
     const treeEntries = treeText.split('\0').filter(Boolean);
-    let historicalRef = baseRef;
+    let historicalRef: string | null = baseRef;
     if (treeEntries.length === 0) {
         let historyText;
         try {
@@ -577,7 +741,7 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
                 diagnostic(
                     'HISTORICAL_ARTICLE_MAP_HISTORY_UNREADABLE',
                     mapPath,
-                    `${baseRef}からmap履歴を検索できません: ${error.message}`,
+                    `${baseRef}からmap履歴を検索できません: ${(error as Error).message}`,
                 ),
             );
             return;
@@ -631,7 +795,7 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
                     diagnostic(
                         'HISTORICAL_ARTICLE_MAP_TREE_UNREADABLE',
                         mapPath,
-                        `${revision}のtreeを検証できません: ${error.message}`,
+                        `${revision}のtreeを検証できません: ${(error as Error).message}`,
                     ),
                 );
                 return;
@@ -701,7 +865,7 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
             diagnostic(
                 'HISTORICAL_ARTICLE_MAP_UNREADABLE',
                 mapPath,
-                `${historicalRef}のarticle-map.jsonを読み取れません: ${error.message}`,
+                `${historicalRef}のarticle-map.jsonを読み取れません: ${(error as Error).message}`,
             ),
         );
         return;
@@ -715,7 +879,7 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
             diagnostic(
                 'INVALID_HISTORICAL_ARTICLE_MAP',
                 mapPath,
-                `比較元のarticle-map.jsonを解析できません: ${error.message}`,
+                `比較元のarticle-map.jsonを解析できません: ${(error as Error).message}`,
             ),
         );
         return;
@@ -729,8 +893,12 @@ function validateHistoricalBindings(options, currentData, diagnostics) {
     );
 }
 
-function analyzeArticleReferences(content, file, diagnostics) {
-    const references = [];
+function analyzeArticleReferences(
+    content: string,
+    file: string,
+    diagnostics: Diagnostic[],
+): ArticleReference[] {
+    const references: ArticleReference[] = [];
     let cursor = 0;
 
     while (cursor < content.length) {
@@ -775,8 +943,12 @@ function analyzeArticleReferences(content, file, diagnostics) {
     return references;
 }
 
-function parseMarkdown(filePath, relativePath, diagnostics) {
-    let raw;
+function parseMarkdown(
+    filePath: string,
+    relativePath: string,
+    diagnostics: Diagnostic[],
+): ParsedMarkdown | null {
+    let raw: string;
     try {
         raw = fs.readFileSync(filePath, 'utf8');
     } catch (error) {
@@ -784,13 +956,13 @@ function parseMarkdown(filePath, relativePath, diagnostics) {
             diagnostic(
                 'ARTICLE_NOT_FOUND',
                 relativePath,
-                `記事を読み取れません: ${error.message}`,
+                `記事を読み取れません: ${(error as Error).message}`,
             ),
         );
         return null;
     }
 
-    let parsed;
+    let parsed: import('gray-matter').GrayMatterFile<string>;
     try {
         parsed = matter(raw);
     } catch (error) {
@@ -798,7 +970,7 @@ function parseMarkdown(filePath, relativePath, diagnostics) {
             diagnostic(
                 'INVALID_FRONT_MATTER',
                 relativePath,
-                `front matterを解析できません: ${error.message}`,
+                `front matterを解析できません: ${(error as Error).message}`,
             ),
         );
         return null;
@@ -820,7 +992,11 @@ function parseMarkdown(filePath, relativePath, diagnostics) {
     return { raw, data: parsed.data, content: parsed.content };
 }
 
-function listDirectFiles(directory, diagnostics, label) {
+function listDirectFiles(
+    directory: string,
+    diagnostics: Diagnostic[],
+    label: string,
+): import('node:fs').Dirent[] {
     try {
         return fs.readdirSync(directory, { withFileTypes: true });
     } catch (error) {
@@ -828,14 +1004,16 @@ function listDirectFiles(directory, diagnostics, label) {
             diagnostic(
                 'DIRECTORY_NOT_FOUND',
                 directory,
-                `${label}を読み取れません: ${error.message}`,
+                `${label}を読み取れません: ${(error as Error).message}`,
             ),
         );
         return [];
     }
 }
 
-function loadIdentityContext(options = {}) {
+function loadIdentityContext(
+    options: IdentityOptions = {},
+): IdentityContext {
     const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '..'));
     const sourceDir = path.resolve(
         options.sourceDir || path.join(repoRoot, 'pre-publish'),
@@ -849,7 +1027,7 @@ function loadIdentityContext(options = {}) {
     const mapPath = path.resolve(
         options.mapPath || path.join(repoRoot, 'article-map.json'),
     );
-    const diagnostics = [];
+    const diagnostics: Diagnostic[] = [];
 
     const articleMap = readArticleMap(mapPath, diagnostics);
     const manifest = readManifest(manifestPath, diagnostics);
@@ -876,7 +1054,7 @@ function loadIdentityContext(options = {}) {
         'articlesディレクトリ',
     );
 
-    const actualSourceFiles = new Set();
+    const actualSourceFiles = new Set<string>();
     for (const entry of sourceEntries) {
         if (entry.isDirectory() || entry.isSymbolicLink()) {
             diagnostics.push(
@@ -937,7 +1115,7 @@ function loadIdentityContext(options = {}) {
         }
     }
 
-    const actualTargetFiles = new Set();
+    const actualTargetFiles = new Set<string>();
     for (const entry of targetEntries) {
         if (entry.name === '.keep') {
             continue;
@@ -1003,7 +1181,7 @@ function loadIdentityContext(options = {}) {
         }
     }
 
-    const sourceArticles = new Map();
+    const sourceArticles = new Map<ArticleId, SourceArticle>();
     for (const manifestEntry of manifest.entries.values()) {
         if (!actualSourceFiles.has(manifestEntry.file)) {
             continue;
@@ -1071,7 +1249,7 @@ function loadIdentityContext(options = {}) {
         }
     }
 
-    const targetArticles = new Map();
+    const targetArticles = new Map<ArticleId, TargetArticle>();
     for (const mapEntry of articleMap.entries.values()) {
         const targetFile = `${mapEntry.slug}.md`;
         if (!actualTargetFiles.has(targetFile)) {
@@ -1122,8 +1300,10 @@ function loadIdentityContext(options = {}) {
     };
 }
 
-function serializeArticleMap(entries) {
-    const bindings = {};
+function serializeArticleMap(
+    entries: ReadonlyMap<ArticleId, ArticleMapEntry>,
+): string {
+    const bindings: Record<ArticleId, SerializedBinding> = {};
     for (const [articleId, entry] of [...entries.entries()].sort(
         ([left], [right]) => left.localeCompare(right),
     )) {
@@ -1144,9 +1324,10 @@ function serializeArticleMap(entries) {
     )}\n`;
 }
 
-function formatIdentityError(error) {
+function formatIdentityError(error: unknown): string {
     if (!(error instanceof IdentityValidationError)) {
-        return error.stack || error.message;
+        const generalError = error as Error;
+        return generalError.stack || generalError.message;
     }
     return [
         error.message,
