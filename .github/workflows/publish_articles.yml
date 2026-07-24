@@ -33,7 +33,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Type-check JavaScript migration baseline
+      - name: Type-check TypeScript
         run: npm run typecheck
 
       - name: Test identity and generation safety
